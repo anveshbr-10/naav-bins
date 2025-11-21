@@ -10,10 +10,9 @@ app.use(cors());
 app.use(express.json());
 
 // 1. DATABASE CONNECTION
-mongoose.connect('mongodb://127.0.0.1:27017/smartbin_db', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).then(() => console.log("✅ MongoDB Connected"))
+
+mongoose.connect('mongodb://127.0.0.1:27017/smartbin_db')
+  .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
 // 2. USER MODEL (Schema)
@@ -73,22 +72,45 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // Add Waste (The AI Trigger)
+// server/index.js
+
 app.post('/api/add-waste', async (req, res) => {
     const token = req.headers['x-access-token'];
     try {
         const decoded = jwt.verify(token, 'secret123');
         const user = await User.findById(decoded.id);
         
-        const reward = 10; // ₹10 per scan
-        const points = 50;
+        const type = req.body.wasteType || 'Plastic'; // Get type from frontend
+        
+        // --- DYNAMIC REWARD LOGIC ---
+        let reward = 0;
+        let points = 0;
+
+        if (type === 'Plastic') {
+            reward = 10;   // Higher reward for Plastic
+            points = 50;   // Higher points
+        } else {
+            reward = 7;    // Lower reward for Non-Plastic (Organic/Paper)
+            points = 20;   // Lower points
+        }
+        // -----------------------------
         
         user.walletBalance += reward;
         user.ecoPoints += points;
-        user.co2Saved += 0.5;
-        user.logs.push({ date: new Date(), wasteType: 'Plastic', weight: 0.5, amount: reward });
+        
+        // Log it
+        user.logs.push({ 
+            date: new Date(), 
+            wasteType: type, 
+            weight: 0.5, 
+            amount: reward 
+        });
         
         await user.save();
-        res.json({ status: 'ok' });
+        
+        // Send the calculated reward back to frontend so we can show it
+        res.json({ status: 'ok', rewardAdded: reward }); 
+        
     } catch (error) {
         res.json({ status: 'error' });
     }
