@@ -1,4 +1,4 @@
-# naav-bins
+# Smart-Bin
 ♻️ SmartBin - AI-Powered Waste Management System
 SmartBin is a full-stack MERN application designed to revolutionize waste management. It uses Artificial Intelligence to identify waste types, guides users on proper segregation (Plastic vs. Organic), and incentivizes recycling through a digital wallet and reward point system.
 
