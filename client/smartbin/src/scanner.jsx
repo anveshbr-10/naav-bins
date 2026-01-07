@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import * as tmImage from '@teachablemachine/image';
 import Webcam from 'react-webcam';
 import axios from 'axios';
@@ -25,22 +25,11 @@ export default function Scanner() {
 
   useEffect(() => {
     if (step === 1) {
-      // QR Scanner Config - Prefer Environment Camera
-      const config = {
-        fps: 10,
-        qrbox: 250,
-        videoConstraints: { facingMode: { exact: "environment" } }
-      };
-
-      const scanner = new Html5QrcodeScanner("reader", config, false);
-
+      const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 }, false);
       scanner.render((text) => {
         scanner.clear();
         setStep(2); // Move to AI
-      }, (err) => {
-        // console.log(err); // Reduce noise
-      });
-
+      }, (err) => console.log(err));
       return () => scanner.clear().catch(e => console.log(e));
     }
   }, [step]);
@@ -86,7 +75,7 @@ export default function Scanner() {
           // --- SUBMIT TO SERVER ---
           // We wait 3 seconds so the user can read the instruction before leaving the page
           setTimeout(async () => {
-            await axios.post('https://smartbin-api.onrender.com/api/add-waste', {
+            await axios.post('https://smartbin-api-c7g4.onrender.com/api/add-waste', {
               wasteType: wasteType // Send "Plastic" or "Non-Plastic"
             }, {
               headers: { 'x-access-token': localStorage.getItem('token') }
@@ -107,22 +96,21 @@ export default function Scanner() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center p-5 pt-10">
-      <h1 className="text-2xl font-bold mb-6 font-sans">Smart Bin Scanner</h1>
+      <h1 className="text-2xl font-bold mb-6">Smart Bin Scanner</h1>
 
       {step === 1 && (
-        <div className="bg-white p-6 rounded-2xl text-black w-full max-w-md shadow-lg">
-          <p className="mb-4 text-center font-bold text-lg">Step 1: Scan Bin QR</p>
-          <div id="reader" className="overflow-hidden rounded-xl"></div>
-          <p className="text-center text-gray-400 text-sm mt-4">Point at the QR code on the Smart Bin</p>
+        <div className="bg-white p-6 rounded-lg text-black w-full max-w-md">
+          <p className="mb-4 text-center font-bold">Step 1: Scan Bin QR</p>
+          <div id="reader"></div>
         </div>
       )}
 
       {step === 2 && (
         <div className="flex flex-col items-center w-full max-w-md">
-          <p className="text-gray-400 mb-2 font-medium">Connected! Show Waste.</p>
+          <p className="text-gray-400 mb-2">Connected! Show Waste.</p>
 
           {/* Dynamic Border Color changes based on waste type */}
-          <div className={`relative border-8 ${borderColor} rounded-2xl overflow-hidden w-full transition-all duration-500 shadow-2xl`}>
+          <div className={`border-8 ${borderColor} rounded-lg overflow-hidden w-full transition-all duration-500`}>
             <Webcam
               ref={webcamRef}
               screenshotFormat="image/jpeg"
@@ -131,20 +119,20 @@ export default function Scanner() {
             />
           </div>
 
-          <div className="mt-6 text-center w-full">
-            <p className="text-xl font-bold text-white mb-4">{status}</p>
+          <div className="mt-6 text-center">
+            <p className="text-xl font-bold text-white mb-2">{status}</p>
 
             {/* BIG INSTRUCTION TEXT */}
             {instruction && (
-              <div className={`p-6 rounded-2xl ${instruction.includes("YELLOW") ? "bg-yellow-400 text-black" : "bg-blue-600 text-white"} animate-bounce shadow-lg`}>
+              <div className={`p-4 rounded-xl ${instruction.includes("YELLOW") ? "bg-yellow-500 text-black" : "bg-blue-600 text-white"} animate-bounce`}>
                 <h2 className="text-2xl font-extrabold">{instruction}</h2>
               </div>
             )}
           </div>
 
           {!instruction && (
-            <button onClick={capture} className="mt-6 bg-emerald-500 active:bg-emerald-700 px-10 py-5 rounded-full text-xl font-bold shadow-lg shadow-emerald-500/40 hover:scale-105 transition transform flex items-center gap-2">
-              📸 Analyze Waste
+            <button onClick={capture} className="mt-6 bg-green-600 active:bg-green-800 px-10 py-4 rounded-full text-xl font-bold shadow-lg">
+              Analyze Waste
             </button>
           )}
         </div>
