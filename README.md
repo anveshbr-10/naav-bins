@@ -44,7 +44,7 @@ Frontend: React.js (Vite), Tailwind CSS, Recharts, Lucide React, React Webcam, A
 
 Backend: Node.js.
 
-Database: MongoDB (Mongoose).
+Database: Firebase (Firestore).
 
 AI/ML: Google Teachable Machine (TensorFlow.js).
 
@@ -103,7 +103,7 @@ Start the server:
 Bash
 
 node index.js
-You should see: ✅ MongoDB Connected and ✅ Server running on port 5000.
+You should see: ✅ Firebase Firestore Connected and ✅ Server running on port 5000 (Firebase Mode).
 
 Step 2: Setup the Frontend (Client)
 Open a new terminal and navigate to the client app:
@@ -148,9 +148,9 @@ To access the Developer Dashboard:
 
 Register a new user on the website.
 
-Open MongoDB Compass.
+Open Firebase Console.
 
-Go to smartbin_db -> users.
+Go to Firestore Database -> users.
 
 Find your user and change the role field from "user" to "admin".
 
