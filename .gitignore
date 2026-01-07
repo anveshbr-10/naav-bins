@@ -33,3 +33,7 @@ my_data/*
 build/output.txt
 *.log
 !important.log
+
+node_modules
+server/serviceAccountKey.json
+.env
