@@ -11,9 +11,9 @@ export default function Dashboard() {
   // Refresh function to reload data after redemption
   const fetchUserData = () => {
     const token = localStorage.getItem('token');
-    if(!token) navigate('/login');
-    axios.get('http://localhost:5000/api/dashboard', { headers: { 'x-access-token': token } })
-      .then(res => { if(res.data.status === 'ok') setUser(res.data.user); });
+    if (!token) navigate('/login');
+    axios.get('https://smartbin-api-c7g4.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
+      .then(res => { if (res.data.status === 'ok') setUser(res.data.user); });
   };
 
   useEffect(() => { fetchUserData(); }, []);
@@ -24,15 +24,15 @@ export default function Dashboard() {
   const handleRedeem = async (item, cost, type) => {
     if (!window.confirm(`Are you sure you want to redeem ${item} for ${cost} ${type === 'money' ? 'Rupees' : 'Points'}?`)) return;
 
-    const res = await axios.post('http://localhost:5000/api/redeem', { item, cost, type }, {
-        headers: { 'x-access-token': localStorage.getItem('token') }
+    const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/redeem', { item, cost, type }, {
+      headers: { 'x-access-token': localStorage.getItem('token') }
     });
 
     if (res.data.status === 'ok') {
-        alert(`Success! You redeemed: ${item}`);
-        fetchUserData(); // Update balance instantly
+      alert(`Success! You redeemed: ${item}`);
+      fetchUserData(); // Update balance instantly
     } else {
-        alert(`Failed: ${res.data.message}`);
+      alert(`Failed: ${res.data.message}`);
     }
   };
 
@@ -49,7 +49,7 @@ export default function Dashboard() {
     const last7Days = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i);
-      const dateString = d.toDateString(); 
+      const dateString = d.toDateString();
       const dailyTotal = user.logs
         .filter(log => new Date(log.date).toDateString() === dateString)
         .reduce((sum, log) => sum + (log.amount || 0), 0);
@@ -63,7 +63,7 @@ export default function Dashboard() {
     { name: 'Non - Plastic', value: user.logs?.filter(l => l.wasteType !== 'Plastic').length || 0 },
   ];
   // Handle empty chart case
-  if(pieData[0].value === 0 && pieData[1].value === 0) pieData[0].value = 1;
+  if (pieData[0].value === 0 && pieData[1].value === 0) pieData[0].value = 1;
 
   const COLORS = ['#22c55e', '#64748b'];
 
@@ -75,8 +75,8 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-gray-800">Hello, {user.name}!</h1>
           <p className="text-gray-500">Your Impact & Rewards Dashboard</p>
         </div>
-        <button onClick={() => {localStorage.removeItem('token'); navigate('/')}} className="flex items-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition">
-          <LogOut size={20}/> Logout
+        <button onClick={() => { localStorage.removeItem('token'); navigate('/') }} className="flex items-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition">
+          <LogOut size={20} /> Logout
         </button>
       </div>
 
@@ -88,7 +88,7 @@ export default function Dashboard() {
             <p className="text-4xl font-bold text-green-600">₹{user.walletBalance}</p>
             <button onClick={() => handleRedeem("Bank Transfer", 100, 'money')} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded mt-2 font-bold hover:bg-green-200">Withdraw ₹100</button>
           </div>
-          <Wallet className="text-green-600" size={40}/>
+          <Wallet className="text-green-600" size={40} />
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
@@ -96,14 +96,14 @@ export default function Dashboard() {
             <p className="text-4xl font-bold text-blue-600">{user.ecoPoints}</p>
             <p className="text-xs text-blue-400 mt-1">Redeem below</p>
           </div>
-          <Leaf className="text-blue-600" size={40}/>
+          <Leaf className="text-blue-600" size={40} />
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
             <h2 className="text-gray-400 font-medium">CO2 Saved</h2>
             <p className="text-4xl font-bold text-yellow-600">{(user.ecoPoints * 0.02).toFixed(1)} kg</p>
           </div>
-          <Trash2 className="text-yellow-600" size={40}/>
+          <Trash2 className="text-yellow-600" size={40} />
         </div>
       </div>
 
@@ -122,7 +122,7 @@ export default function Dashboard() {
               <XAxis dataKey="name" />
               <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey="earnings" stroke="#16a34a" strokeWidth={3} dot={{r:4}} />
+              <Line type="monotone" dataKey="earnings" stroke="#16a34a" strokeWidth={3} dot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -143,13 +143,13 @@ export default function Dashboard() {
       {/* NEW SECTION 1: REWARDS SHOP */}
       <div className="mb-10">
         <h3 className="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
-          <Ticket className="text-blue-600"/> Redeem Eco Points
+          <Ticket className="text-blue-600" /> Redeem Eco Points
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
+
           {/* Reward Card 1 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
-            <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Ticket className="text-purple-600"/></div>
+            <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Ticket className="text-purple-600" /></div>
             <h4 className="text-xl font-bold">Movie Voucher</h4>
             <p className="text-gray-500 text-sm mb-4">Get ₹200 off on BookMyShow</p>
             <div className="flex justify-between items-center">
@@ -160,7 +160,7 @@ export default function Dashboard() {
 
           {/* Reward Card 2 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
-            <div className="bg-yellow-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Bus className="text-yellow-600"/></div>
+            <div className="bg-yellow-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Bus className="text-yellow-600" /></div>
             <h4 className="text-xl font-bold">Bus Pass</h4>
             <p className="text-gray-500 text-sm mb-4">One Day City Bus Pass</p>
             <div className="flex justify-between items-center">
@@ -171,7 +171,7 @@ export default function Dashboard() {
 
           {/* Reward Card 3 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
-            <div className="bg-indigo-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Train className="text-indigo-600"/></div>
+            <div className="bg-indigo-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Train className="text-indigo-600" /></div>
             <h4 className="text-xl font-bold">Metro Recharge</h4>
             <p className="text-gray-500 text-sm mb-4">Add ₹50 to your Metro Card</p>
             <div className="flex justify-between items-center">
@@ -183,20 +183,20 @@ export default function Dashboard() {
         </div>
       </div>
 
-{/* RECENT ACTIVITY LOGS */}
+      {/* RECENT ACTIVITY LOGS */}
       <div className="mt-8">
-        <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2"><History/> Recent Activity</h3>
+        <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2"><History /> Recent Activity</h3>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           {user.logs && user.logs.length > 0 ? (
-             user.logs.slice().reverse().slice(0, 5).map((log, i) => (
-               <div key={i} className="p-4 border-b last:border-0 flex justify-between items-center hover:bg-gray-50">
-                 <div>
-                   <p className="font-bold text-gray-800">{log.wasteType}</p>
-                   <p className="text-xs text-gray-500">{new Date(log.date).toLocaleDateString()} at {new Date(log.date).toLocaleTimeString()}</p>
-                 </div>
-                 <span className="text-green-600 font-bold">+₹{log.amount}</span>
-               </div>
-             ))
+            user.logs.slice().reverse().slice(0, 5).map((log, i) => (
+              <div key={i} className="p-4 border-b last:border-0 flex justify-between items-center hover:bg-gray-50">
+                <div>
+                  <p className="font-bold text-gray-800">{log.wasteType}</p>
+                  <p className="text-xs text-gray-500">{new Date(log.date).toLocaleDateString()} at {new Date(log.date).toLocaleTimeString()}</p>
+                </div>
+                <span className="text-green-600 font-bold">+₹{log.amount}</span>
+              </div>
+            ))
           ) : (
             <div className="p-6 text-center text-gray-400">No activity yet. Scan some items to see data!</div>
           )}

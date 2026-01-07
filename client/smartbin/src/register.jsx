@@ -12,10 +12,10 @@ export default function Register() {
   async function handleRegister(e) {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:5000/api/register', {
+      const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/register', {
         name, email, password
       });
-      
+
       if (res.data.status === 'ok') {
         alert("Registration Successful! Please Login.");
         navigate('/login');
@@ -30,7 +30,7 @@ export default function Register() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-400 to-green-600 p-4">
       <div className="bg-white/95 backdrop-blur-sm p-8 rounded-2xl shadow-2xl w-full max-w-md transform transition-all hover:scale-[1.01]">
-        
+
         {/* Header */}
         <div className="text-center mb-8">
           <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -44,9 +44,9 @@ export default function Register() {
         <form onSubmit={handleRegister} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input 
+            <input
               required
-              type="text" 
+              type="text"
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="John Doe"
               onChange={(e) => setName(e.target.value)}
@@ -55,9 +55,9 @@ export default function Register() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-            <input 
+            <input
               required
-              type="email" 
+              type="email"
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="john@example.com"
               onChange={(e) => setEmail(e.target.value)}
@@ -66,9 +66,9 @@ export default function Register() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input 
+            <input
               required
-              type="password" 
+              type="password"
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="••••••••"
               onChange={(e) => setPassword(e.target.value)}

@@ -11,11 +11,11 @@ export default function Login() {
   async function handleLogin(e) {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:5000/api/login', { email, password });
+      const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/login', { email, password });
       if (res.data.status === 'ok') {
         localStorage.setItem('token', res.data.token);
         // Check role for redirection
-        if(res.data.role === 'admin') navigate('/admin');
+        if (res.data.role === 'admin') navigate('/admin');
         else navigate('/dashboard');
       } else {
         alert("Invalid Credentials. Please try again.");
@@ -28,7 +28,7 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-500 to-emerald-700 p-4">
       <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md transform transition-all hover:scale-[1.01]">
-        
+
         {/* Header */}
         <div className="text-center mb-8">
           <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -42,9 +42,9 @@ export default function Login() {
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-            <input 
+            <input
               required
-              type="email" 
+              type="email"
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition"
               placeholder="john@example.com"
               onChange={(e) => setEmail(e.target.value)}
@@ -52,13 +52,13 @@ export default function Login() {
           </div>
 
           <div>
-             <div className="flex justify-between mb-1">
-                <label className="block text-sm font-medium text-gray-700">Password</label>
-                <a href="#" className="text-sm text-green-600 hover:underline">Forgot?</a>
+            <div className="flex justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">Password</label>
+              <a href="#" className="text-sm text-green-600 hover:underline">Forgot?</a>
             </div>
-            <input 
+            <input
               required
-              type="password" 
+              type="password"
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition"
               placeholder="••••••••"
               onChange={(e) => setPassword(e.target.value)}
