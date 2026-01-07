@@ -7,7 +7,7 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      
+
       {/* 1. NAVBAR */}
       <nav className="flex justify-between items-center p-6 px-10 shadow-sm bg-white z-50">
         <div className="flex items-center gap-2">
@@ -15,13 +15,13 @@ export default function Landing() {
           <span className="text-2xl font-bold text-gray-800 tracking-tight">SmartBin</span>
         </div>
         <div className="space-x-4">
-          <button 
+          <button
             onClick={() => navigate('/login')}
             className="text-gray-600 font-medium hover:text-green-600 transition"
           >
             Login
           </button>
-          <button 
+          <button
             onClick={() => navigate('/register')}
             className="bg-green-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-green-700 transition shadow-lg"
           >
@@ -40,15 +40,15 @@ export default function Landing() {
           <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto">
             Scan. Dispose. Earn. A smarter way to manage waste sustainably. Join thousands of users making a difference today.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button 
+            <button
               onClick={() => navigate('/register')}
               className="flex items-center justify-center gap-2 bg-green-600 text-white px-8 py-4 rounded-full text-lg font-bold hover:bg-green-700 transition shadow-xl transform hover:scale-105"
             >
               Register Now <ArrowRight size={20} />
             </button>
-            <button 
+            <button
               onClick={() => navigate('/login')}
               className="bg-white text-green-600 border-2 border-green-600 px-8 py-4 rounded-full text-lg font-bold hover:bg-green-50 transition"
             >
@@ -72,7 +72,7 @@ export default function Landing() {
 
           {/* Stat 2 */}
           <div className="p-8 rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-center border-b-4 border-blue-500">
-             <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <Wallet className="text-blue-600 w-8 h-8" />
             </div>
             <h3 className="text-4xl font-bold text-gray-800 mb-2">₹8,456</h3>
@@ -81,7 +81,7 @@ export default function Landing() {
 
           {/* Stat 3 */}
           <div className="p-8 rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-center border-b-4 border-yellow-500">
-             <div className="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <TreePine className="text-yellow-600 w-8 h-8" />
             </div>
             <h3 className="text-4xl font-bold text-gray-800 mb-2">2,341 kg</h3>
