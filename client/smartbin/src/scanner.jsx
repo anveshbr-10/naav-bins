@@ -4,23 +4,24 @@ import * as tmImage from '@teachablemachine/image';
 import Webcam from 'react-webcam';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react'; // Added icon for loading
 
 export default function Scanner() {
   const [step, setStep] = useState(1); // 1 = QR, 2 = AI
   const [status, setStatus] = useState("Waiting for waste...");
-  const [instruction, setInstruction] = useState(""); // Stores "Yellow Bin" or "Blue Bin"
-  const [borderColor, setBorderColor] = useState("border-gray-500"); // Dynamic border color
+  const [instruction, setInstruction] = useState("");
+  const [borderColor, setBorderColor] = useState("border-gray-500");
+  const [isProcessing, setIsProcessing] = useState(false); // <--- NEW: LOCK STATE
   const webcamRef = useRef(null);
   const navigate = useNavigate();
 
-  // --- CAMERA CONFIG (USE BACK CAMERA) ---
+  // --- CAMERA CONFIG ---
   const videoConstraints = {
     width: 400,
     height: 400,
-    facingMode: "environment" // <--- THIS FORCES THE BACK CAMERA
+    facingMode: "environment"
   };
 
-  // --- PASTE YOUR TEACHABLE MACHINE URL BELOW ---
   const URL = "https://teachablemachine.withgoogle.com/models/GRs1e8MV9/";
 
   useEffect(() => {
@@ -28,14 +29,18 @@ export default function Scanner() {
       const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 }, false);
       scanner.render((text) => {
         scanner.clear();
-        setStep(2); // Move to AI
+        setStep(2);
       }, (err) => console.log(err));
       return () => scanner.clear().catch(e => console.log(e));
     }
   }, [step]);
 
   const capture = async () => {
-    if (!webcamRef.current) return;
+    // 1. BLOCK MULTIPLE CLICKS
+    if (!webcamRef.current || isProcessing) return;
+
+    // 2. LOCK THE BUTTON
+    setIsProcessing(true);
     setStatus("Analyzing...");
     setInstruction("");
     setBorderColor("border-gray-500");
@@ -48,10 +53,9 @@ export default function Scanner() {
 
       img.onload = async () => {
         const prediction = await model.predict(img);
-
-        // Find the prediction with the highest probability
         const bestPrediction = prediction.sort((a, b) => b.probability - a.probability)[0];
 
+        // 3. SUCCESS CASE (Keep Locked)
         if (bestPrediction.probability > 0.80) {
 
           let wasteType = "Non-Plastic";
@@ -59,7 +63,6 @@ export default function Scanner() {
           let cssColor = "border-blue-600";
           let userMsg = "Non-Plastic Detected";
 
-          // CHECK IF IT IS PLASTIC (Make sure your Class Name in Teachable Machine is 'Plastic')
           if (bestPrediction.className === "Plastic" || bestPrediction.className === "Class 1") {
             wasteType = "Plastic";
             binColor = "Yellow";
@@ -67,7 +70,6 @@ export default function Scanner() {
             userMsg = "Plastic Detected";
           }
 
-          // --- UPDATE UI ---
           setStatus(`✅ ${userMsg}`);
           setInstruction(`👉 Please dispose in the ${binColor.toUpperCase()} BIN`);
           setBorderColor(cssColor);
@@ -87,10 +89,12 @@ export default function Scanner() {
         } else {
           setStatus("❌ Not clear. Please hold the item closer.");
           setBorderColor("border-red-500");
+          setIsProcessing(false);
         }
       }
     } catch (e) {
       alert("Model Error: Check your URL.");
+      setIsProcessing(false);
     }
   };
 
@@ -109,12 +113,11 @@ export default function Scanner() {
         <div className="flex flex-col items-center w-full max-w-md">
           <p className="text-gray-400 mb-2">Connected! Show Waste.</p>
 
-          {/* Dynamic Border Color changes based on waste type */}
           <div className={`border-8 ${borderColor} rounded-lg overflow-hidden w-full transition-all duration-500`}>
             <Webcam
               ref={webcamRef}
               screenshotFormat="image/jpeg"
-              videoConstraints={videoConstraints} // <--- Forces Back Camera
+              videoConstraints={videoConstraints}
               className="w-full object-cover h-80"
             />
           </div>
@@ -122,7 +125,6 @@ export default function Scanner() {
           <div className="mt-6 text-center">
             <p className="text-xl font-bold text-white mb-2">{status}</p>
 
-            {/* BIG INSTRUCTION TEXT */}
             {instruction && (
               <div className={`p-4 rounded-xl ${instruction.includes("YELLOW") ? "bg-yellow-500 text-black" : "bg-blue-600 text-white"} animate-bounce`}>
                 <h2 className="text-2xl font-extrabold">{instruction}</h2>
@@ -131,8 +133,20 @@ export default function Scanner() {
           </div>
 
           {!instruction && (
-            <button onClick={capture} className="mt-6 bg-green-600 active:bg-green-800 px-10 py-4 rounded-full text-xl font-bold shadow-lg">
-              Analyze Waste
+            <button
+              onClick={capture}
+              disabled={isProcessing} // <--- DISABLES BUTTON
+              className={`mt-6 px-10 py-4 rounded-full text-xl font-bold shadow-lg flex items-center gap-2 transition-all
+                    ${isProcessing
+                  ? "bg-gray-600 cursor-not-allowed opacity-50"
+                  : "bg-green-600 active:bg-green-800 hover:scale-105"}`
+              }
+            >
+              {isProcessing ? (
+                <><Loader2 className="animate-spin" /> Analyzing...</>
+              ) : (
+                "Analyze Waste"
+              )}
             </button>
           )}
         </div>
