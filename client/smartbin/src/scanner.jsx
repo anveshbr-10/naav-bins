@@ -130,7 +130,7 @@ export default function Scanner() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-white">Smart Bin Scanner</h1>
-          <p className="text-slate-400 text-sm">Scan > Identify > Earn</p>
+          <p className="text-slate-400 text-sm">Scan → Identify → Earn</p>
         </div>
       </div>
 

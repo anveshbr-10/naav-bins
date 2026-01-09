@@ -110,8 +110,6 @@ export default function Dashboard() {
         🗺️ Find Nearby Bins
       </button>
 
-
-
       {/* CHARTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
