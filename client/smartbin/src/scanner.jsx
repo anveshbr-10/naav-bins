@@ -96,29 +96,26 @@ export default function Scanner() {
           setInstruction(`👉 Please dispose in the ${binColor.toUpperCase()} BIN`);
           setBorderColor(cssColor);
 
+          // --- SUBMIT TO SERVER ---
+          // We wait 3 seconds so the user can read the instruction before leaving the page
           setTimeout(async () => {
-            try {
-              await axios.post('https://smartbin-api.onrender.com/api/add-waste', {
-                wasteType: wasteType
-              }, {
-                headers: { 'x-access-token': localStorage.getItem('token') }
-              });
-              alert(`Reward Added! (${wasteType})`);
-              navigate('/dashboard');
-            } catch (error) {
-              alert("Network Error: Could not save reward.");
-              setIsProcessing(false);
-            }
+            await axios.post('https://smartbin-api-c7g4.onrender.com/api/add-waste', {
+              wasteType: wasteType // Send "Plastic" or "Non-Plastic"
+            }, {
+              headers: { 'x-access-token': localStorage.getItem('token') }
+            });
+            alert(`Reward Added! (${wasteType})`);
+            navigate('/dashboard');
           }, 3000);
 
         } else {
-          setStatus("❌ Not clear. Please hold item closer.");
+          setStatus("❌ Not clear. Please hold the item closer.");
           setBorderColor("border-red-500");
           setIsProcessing(false);
         }
       }
     } catch (e) {
-      alert("Model Error: Check your URL or Camera permissions.");
+      alert("Model Error: Check your URL.");
       setIsProcessing(false);
     }
   };
