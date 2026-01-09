@@ -38,7 +38,7 @@ export default function Scanner() {
         scanner.clear();
         setStep(2);
       }, (err) => {
-        // console.log(err); // Keep console clean
+        console.log(err); // Keep console clean
       });
       return () => scanner.clear().catch(e => console.log(e));
     }
