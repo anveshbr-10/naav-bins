@@ -6,6 +6,7 @@ import Register from './register'; // New Import
 import Dashboard from './dashboard';
 import Scanner from './scanner';
 import Admin from './admin';
+import SmartBinMap from './smartbinmaps';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/scan" element={<Scanner />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/map" element={<SmartBinMap />} />
       </Routes>
     </BrowserRouter>
   );

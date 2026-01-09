@@ -106,11 +106,11 @@ export default function Dashboard() {
           <Trash2 className="text-yellow-600" size={40} />
         </div>
       </div>
-
-      {/* ACTION BUTTON */}
-      <button onClick={() => navigate('/scan')} className="bg-gradient-to-r from-green-600 to-emerald-600 text-white w-full py-5 text-xl rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition transform font-bold flex items-center justify-center gap-3 mb-10">
-        Start Smart Bin Scanner
+      <button onClick={() => navigate('/map')} className="bg-gradient-to-r from-green-600 to-emerald-600 text-white w-full py-5 text-xl rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition transform font-bold flex items-center justify-center gap-3 mb-10">
+        🗺️ Find Nearby Bins
       </button>
+
+
 
       {/* CHARTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
