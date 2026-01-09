@@ -3,7 +3,7 @@ import { Html5Qrcode } from 'html5-qrcode'; // <--- USING THE ENGINE DIRECTLY
 import * as tmImage from '@teachablemachine/image';
 import Webcam from 'react-webcam';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Loader2, ScanQrCode, Camera } from 'lucide-react';
 
 export default function Scanner() {
@@ -17,6 +17,15 @@ export default function Scanner() {
   const webcamRef = useRef(null);
   const scannerRef = useRef(null); // To keep track of the scanner instance
   const navigate = useNavigate();
+
+  const [currentLocation, setCurrentLocation] = useState("Smart Bin (General)");
+
+  useEffect(() => {
+    const savedLocation = localStorage.getItem('current_bin_location');
+    if (savedLocation) {
+      setCurrentLocation(savedLocation);
+    }
+  }, []);
 
   // --- AI CAMERA CONFIG ---
   const videoConstraints = {
@@ -100,10 +109,13 @@ export default function Scanner() {
           // We wait 3 seconds so the user can read the instruction before leaving the page
           setTimeout(async () => {
             await axios.post('https://smartbin-api-c7g4.onrender.com/api/add-waste', {
-              wasteType: wasteType // Send "Plastic" or "Non-Plastic"
+              wasteType: wasteType, // Send "Plastic" or "Non-Plastic"
+              location: currentLocation // <--- SENDING THE REAL LOCATION
             }, {
               headers: { 'x-access-token': localStorage.getItem('token') }
             });
+            // Clear the memory after use so it resets for next time
+            localStorage.removeItem('current_bin_location');
             alert(`Reward Added! (${wasteType})`);
             navigate('/dashboard');
           }, 3000);
@@ -131,6 +143,9 @@ export default function Scanner() {
         <div>
           <h1 className="text-2xl font-bold text-white">Smart Bin Scanner</h1>
           <p className="text-slate-400 text-sm">Scan → Identify → Earn</p>
+          <p className="text-emerald-400 text-sm font-bold flex items-center gap-1">
+            📍 {currentLocation}
+          </p>
         </div>
       </div>
 

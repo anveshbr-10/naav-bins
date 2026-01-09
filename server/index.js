@@ -130,7 +130,7 @@ app.post('/api/add-waste', verifyToken, async (req, res) => {
         const userRef = db.collection('users').doc(req.userEmail);
         const doc = await userRef.get();
         const userData = doc.data();
-
+        const locationName = req.body.location || 'Smart Bin (General)';
         const type = req.body.wasteType || 'Plastic';
 
         let reward = (type === 'Plastic') ? 10 : 7;
@@ -141,7 +141,8 @@ app.post('/api/add-waste', verifyToken, async (req, res) => {
             date: new Date().toISOString(),
             wasteType: type,
             weight: 0.5,
-            amount: reward
+            amount: reward,
+            location: locationName
         };
 
         // ATOMIC UPDATE (Safe math for Firestore)

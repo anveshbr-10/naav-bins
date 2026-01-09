@@ -64,6 +64,11 @@ export default function SmartBinMap() {
 
                 // Add click listener to the button inside popup
                 popupContent.querySelector(`#scan-btn-${bin.id}`).addEventListener('click', () => {
+                    // 1. Save the name to Browser Memory (LocalStorage)
+                    localStorage.setItem('current_bin_location', bin.name);
+                    console.log("Location Saved:", bin.name); // Debug log
+
+                    // 2. Go to Scanner
                     navigate('/scan');
                 });
 

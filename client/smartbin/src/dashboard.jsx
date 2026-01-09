@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { Wallet, Leaf, Trash2, LogOut, History, Ticket, Bus, Train, CreditCard } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { RefreshCw, MapPin } from 'lucide-react';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
@@ -110,6 +111,7 @@ export default function Dashboard() {
         🗺️ Find Nearby Bins
       </button>
 
+
       {/* CHARTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
@@ -191,6 +193,13 @@ export default function Dashboard() {
                 <div>
                   <p className="font-bold text-gray-800">{log.wasteType}</p>
                   <p className="text-xs text-gray-500">{new Date(log.date).toLocaleDateString()} at {new Date(log.date).toLocaleTimeString()}</p>
+                </div>
+                <div>
+                  <div className="hidden sm:block">
+                    <p className="text-emerald-600 text-xs font-bold flex items-center gap-1 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
+                      <MapPin size={12} /> {log.location ? log.location : "Unknown Location"}
+                    </p>
+                  </div>
                 </div>
                 <span className="text-green-600 font-bold">+₹{log.amount}</span>
               </div>
