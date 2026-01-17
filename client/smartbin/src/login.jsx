@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, ArrowLeft } from 'lucide-react';
+import { LogIn, ArrowLeft, Loader2 } from 'lucide-react'; // Added Loader2 icon
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false); // <--- New State for loading
   const navigate = useNavigate();
 
   async function handleLogin(e) {
     e.preventDefault();
+    setIsLoading(true); // <--- Start loading
+
     try {
       const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/login', { email, password });
       if (res.data.status === 'ok') {
@@ -19,9 +22,11 @@ export default function Login() {
         else navigate('/dashboard');
       } else {
         alert("Invalid Credentials. Please try again.");
+        setIsLoading(false); // <--- Stop loading on failure
       }
     } catch (err) {
       alert("Server connection error.");
+      setIsLoading(false); // <--- Stop loading on error
     }
   }
 
@@ -48,6 +53,7 @@ export default function Login() {
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition"
               placeholder="john@example.com"
               onChange={(e) => setEmail(e.target.value)}
+              disabled={isLoading} // Disable input while loading
             />
           </div>
 
@@ -62,11 +68,23 @@ export default function Login() {
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition"
               placeholder="••••••••"
               onChange={(e) => setPassword(e.target.value)}
+              disabled={isLoading} // Disable input while loading
             />
           </div>
 
-          <button className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl shadow-lg transition transform active:scale-95">
-            Login
+          <button
+            disabled={isLoading} // Prevent double clicks
+            className={`w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2
+              ${isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-green-700'}`}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="animate-spin" size={20} />
+                Logging In...
+              </>
+            ) : (
+              "Login"
+            )}
           </button>
         </form>
 
