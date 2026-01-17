@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
-import { UserPlus, ArrowLeft } from 'lucide-react';
+import { UserPlus, ArrowLeft, Loader2, Info } from 'lucide-react'; // Added Loader2 & Info
 
 export default function Register() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false); // <--- New Loading State
   const navigate = useNavigate();
 
   async function handleRegister(e) {
     e.preventDefault();
+    setIsLoading(true); // <--- Start loading
+
     try {
       const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/register', {
         name, email, password
@@ -20,10 +23,12 @@ export default function Register() {
         alert("Registration Successful! Please Login.");
         navigate('/login');
       } else {
-        alert("Error: Email might already be in use.");
+        alert("Error: " + (res.data.error || "Email might already be in use."));
+        setIsLoading(false); // <--- Stop loading on error
       }
     } catch (err) {
       alert("Server connection failed.");
+      setIsLoading(false); // <--- Stop loading on error
     }
   }
 
@@ -50,6 +55,7 @@ export default function Register() {
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="John Doe"
               onChange={(e) => setName(e.target.value)}
+              disabled={isLoading}
             />
           </div>
 
@@ -61,6 +67,7 @@ export default function Register() {
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="john@example.com"
               onChange={(e) => setEmail(e.target.value)}
+              disabled={isLoading}
             />
           </div>
 
@@ -72,12 +79,31 @@ export default function Register() {
               className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition"
               placeholder="••••••••"
               onChange={(e) => setPassword(e.target.value)}
+              disabled={isLoading}
             />
           </div>
 
-          <button className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl shadow-lg transition transform active:scale-95">
-            Sign Up
-          </button>
+          <div>
+            <button
+              disabled={isLoading}
+              className={`w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2
+                ${isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-green-700'}`}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin" size={20} />
+                  Signing Up...
+                </>
+              ) : (
+                "Sign Up"
+              )}
+            </button>
+
+            {/* --- SERVER WAKE-UP MESSAGE --- */}
+            <p className="text-xs text-center text-gray-400 mt-3 flex items-center justify-center gap-1">
+              <Info size={12} /> Note: Server may take ~30s to wake up on first try.
+            </p>
+          </div>
         </form>
 
         {/* Footer Links */}
