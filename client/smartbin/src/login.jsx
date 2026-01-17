@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, ArrowLeft, Loader2 } from 'lucide-react'; // Added Loader2 icon
+import { LogIn, ArrowLeft, Loader2, Info } from 'lucide-react'; // Added Loader2 icon
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -86,6 +86,11 @@ export default function Login() {
               "Login"
             )}
           </button>
+
+          {/* --- SERVER WAKE-UP MESSAGE --- */}
+          <p className="text-xs text-center text-gray-400 mt-3 flex items-center justify-center gap-1">
+            <Info size={12} /> Note: Server may take ~30s to wake up on first try.
+          </p>
         </form>
 
         {/* Footer Links */}
@@ -102,4 +107,4 @@ export default function Login() {
       </div>
     </div>
   );
-}
+}     
