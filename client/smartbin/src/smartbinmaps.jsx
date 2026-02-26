@@ -27,7 +27,7 @@ export default function SmartBinMap() {
     const bins = [
         { id: 1, name: "Main Building Bin", lat: 12.963695293135315, lng: 77.50602831316505, status: "Active" },
         { id: 2, name: "Sports Complex Bin", lat: 12.965048774554218, lng: 77.50595464214099, status: "Active" },
-        { id: 3, name: "Rock Garden Bin", lat: 12.964168121389369, lng: 77.5054484020979, status: "Bin Full" },
+        { id: 3, name: "Rock Garden Bin", lat: 12.964168121389369, lng: 77.5054484020979, status: "Active" },
     ];
 
     useEffect(() => {
