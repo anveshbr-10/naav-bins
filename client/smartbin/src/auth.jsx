@@ -515,7 +515,7 @@ function Auth({ initialPanel = 'login' }) {
           <div className="auth-form-box login-form-box">
             <form onSubmit={handleLogin}>
               <h1>Welcome Back</h1>
-              <p className="form-subtitle">Login to your SmartBin Credentials</p>
+              <p className="form-subtitle">Login with your SmartBin Credentials</p>
 
               <div className="social-links">
                 <a href="#" aria-label="Facebook"><i className="fab fa-facebook-f"></i></a>
