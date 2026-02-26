@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Landing from './landing';
-
+import About from './about';
 
 import Dashboard from './dashboard';
 import Scanner from './scanner';
@@ -20,6 +20,7 @@ function App() {
         <Route path="/scan" element={<Scanner />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/map" element={<SmartBinMap />} />
+        <Route path="/about" element={<About />} />
       </Routes>
     </BrowserRouter>
   );

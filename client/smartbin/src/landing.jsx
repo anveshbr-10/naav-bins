@@ -10,17 +10,34 @@ export default function Landing() {
 
       {/* 1. NAVBAR */}
       <nav className="flex justify-between items-center p-6 px-10 shadow-sm bg-white z-50">
-        <div className="flex items-center gap-2">
+
+        {/* Logo now goes back to Home (Standard Web Practice) */}
+        <div
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition"
+        >
           <Recycle className="w-8 h-8 text-green-600" />
           <span className="text-2xl font-bold text-gray-800 tracking-tight">SmartBin</span>
         </div>
-        <div className="space-x-4">
+
+        {/* Buttons Section */}
+        <div className="space-x-6 flex items-center">
+
+          {/* NEW: Clear explicit About link */}
+          <button
+            onClick={() => navigate('/about')}
+            className="text-gray-600 font-medium hover:text-green-600 transition"
+          >
+            About
+          </button>
+
           <button
             onClick={() => navigate('/login')}
             className="text-gray-600 font-medium hover:text-green-600 transition"
           >
             Login
           </button>
+
           <button
             onClick={() => navigate('/register')}
             className="bg-green-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-green-700 transition shadow-lg"
