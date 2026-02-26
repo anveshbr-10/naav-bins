@@ -23,11 +23,13 @@ export default function SmartBinMap() {
     const [activeLayer, setActiveLayer] = useState("Satellite");
 
     // --- CONFIG: YOUR BIN LOCATIONS ---
-    const centerPosition = [12.963695293135315, 77.50602831316505];
+    const centerPosition = [-20.28894357561763, 57.44281144392436];
     const bins = [
         { id: 1, name: "Main Building Bin", lat: 12.963695293135315, lng: 77.50602831316505, status: "Active" },
         { id: 2, name: "Sports Complex Bin", lat: 12.965048774554218, lng: 77.50595464214099, status: "Active" },
         { id: 3, name: "Rock Garden Bin", lat: 12.964168121389369, lng: 77.5054484020979, status: "Active" },
+        { id: 4, name: "Edu Hub Bin", lat: -20.28894357561763, lng: 57.44281144392436, status: "Active" },
+        { id: 5, name: "Executive Hub Bin", lat: -20.28866234482705, lng: 57.442445273574265, status: "Active" },
     ];
 
     useEffect(() => {
