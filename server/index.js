@@ -246,6 +246,7 @@ app.get('/api/leaderboard', async (req, res) => {
         const { data: leaders, error } = await supabase
             .from('user_profiles')
             .select('name, ecoPoints')
+            .eq('role', 'user')
             .order('ecoPoints', { ascending: false })
             .limit(50);
 

@@ -6,6 +6,7 @@ import About from './about';
 import Dashboard from './dashboard';
 import Scanner from './scanner';
 import Admin from './admin';
+import Leaderboard from './leaderboard';
 import { Login, Register } from './auth';
 import SmartBinMap from './smartbinmaps';
 

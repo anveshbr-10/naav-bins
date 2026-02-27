@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { Wallet, Leaf, Trash2, LogOut, History, Ticket, Bus, Train, CreditCard } from 'lucide-react';
+import { Wallet, Leaf, Trash2, LogOut, History, Ticket, Bus, Train, CreditCard, Trophy, RefreshCw, MapPin } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { RefreshCw, MapPin } from 'lucide-react';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
@@ -13,7 +12,8 @@ export default function Dashboard() {
   const fetchUserData = () => {
     const token = localStorage.getItem('token');
     if (!token) navigate('/login');
-    axios.get('https://smartbin-api-c7g4.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
+    // UPDATED URL TO NEW BACKEND
+    axios.get('https://naav-bins.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
       .then(res => { if (res.data.status === 'ok') setUser(res.data.user); });
   };
 
@@ -25,7 +25,8 @@ export default function Dashboard() {
   const handleRedeem = async (item, cost, type) => {
     if (!window.confirm(`Are you sure you want to redeem ${item} for ${cost} ${type === 'money' ? 'Rupees' : 'Points'}?`)) return;
 
-    const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/redeem', { item, cost, type }, {
+    // UPDATED URL TO NEW BACKEND
+    const res = await axios.post('https://naav-bins.onrender.com/api/redeem', { item, cost, type }, {
       headers: { 'x-access-token': localStorage.getItem('token') }
     });
 
@@ -38,13 +39,12 @@ export default function Dashboard() {
   };
 
   // --- MERGE LOGS & REDEMPTIONS FOR WALLET HISTORY ---
-  // We combine Earnings (logs) and Spendings (redemptions) into one list sorted by date
   const transactions = [
     ...(user.logs || []).map(l => ({ ...l, type: 'credit', desc: `Recycled ${l.wasteType}` })),
     ...(user.redemptions || []).map(r => ({ ...r, type: 'debit', amount: r.cost, desc: r.item }))
-  ].sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort newest first
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // --- CHART DATA PREP (Existing Logic) ---
+  // --- CHART DATA PREP ---
   const processEarningsData = () => {
     if (!user.logs) return [];
     const last7Days = [];
@@ -63,22 +63,38 @@ export default function Dashboard() {
     { name: 'Plastic', value: user.logs?.filter(l => l.wasteType === 'Plastic').length || 0 },
     { name: 'Non - Plastic', value: user.logs?.filter(l => l.wasteType !== 'Plastic').length || 0 },
   ];
-  // Handle empty chart case
   if (pieData[0].value === 0 && pieData[1].value === 0) pieData[0].value = 1;
 
   const COLORS = ['#22c55e', '#64748b'];
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm">
+
+      {/* HEADER SECTION */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 rounded-2xl shadow-sm gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-800">Hello, {user.name}!</h1>
           <p className="text-gray-500">Your Impact & Rewards Dashboard</p>
         </div>
-        <button onClick={() => { localStorage.removeItem('token'); navigate('/') }} className="flex items-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition">
-          <LogOut size={20} /> Logout
-        </button>
+
+        {/* NEW BUTTON CONTAINER */}
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          {/* LEADERBOARD BUTTON */}
+          <button
+            onClick={() => navigate('/leaderboard')}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-yellow-50 text-yellow-600 px-5 py-3 rounded-xl font-bold hover:bg-yellow-100 transition border border-yellow-200"
+          >
+            <Trophy size={20} /> <span className="hidden sm:inline">Leaderboard</span>
+          </button>
+
+          {/* LOGOUT BUTTON */}
+          <button
+            onClick={() => { localStorage.removeItem('token'); navigate('/') }}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition"
+          >
+            <LogOut size={20} /> <span className="hidden sm:inline">Logout</span>
+          </button>
+        </div>
       </div>
 
       {/* MAIN STATS */}
@@ -107,10 +123,10 @@ export default function Dashboard() {
           <Trash2 className="text-yellow-600" size={40} />
         </div>
       </div>
+
       <button onClick={() => navigate('/map')} className="bg-gradient-to-r from-green-600 to-emerald-600 text-white w-full py-5 text-xl rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition transform font-bold flex items-center justify-center gap-3 mb-10">
         🗺️ Find Nearby Bins
       </button>
-
 
       {/* CHARTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
@@ -140,14 +156,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* NEW SECTION 1: REWARDS SHOP */}
+      {/* REWARDS SHOP */}
       <div className="mb-10">
         <h3 className="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
           <Ticket className="text-blue-600" /> Redeem Eco Points
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-          {/* Reward Card 1 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
             <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Ticket className="text-purple-600" /></div>
             <h4 className="text-xl font-bold">Movie Voucher</h4>
@@ -158,7 +172,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Reward Card 2 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
             <div className="bg-yellow-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Bus className="text-yellow-600" /></div>
             <h4 className="text-xl font-bold">Bus Pass</h4>
@@ -169,7 +182,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Reward Card 3 */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition">
             <div className="bg-indigo-100 w-12 h-12 rounded-full flex items-center justify-center mb-4"><Train className="text-indigo-600" /></div>
             <h4 className="text-xl font-bold">Metro Recharge</h4>
@@ -179,7 +191,6 @@ export default function Dashboard() {
               <button onClick={() => handleRedeem("Metro Recharge", 300, 'points')} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-700">Redeem</button>
             </div>
           </div>
-
         </div>
       </div>
 
