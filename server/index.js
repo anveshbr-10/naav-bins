@@ -4,18 +4,13 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const admin = require('firebase-admin');
 
-// --- SMART FIREBASE CONNECTION ---
+// --- SMART FIREBASE CONNECTION (AUTH ONLY) ---
 let serviceAccount;
 
 if (process.env.FIREBASE_CREDS) {
-    // OPTION A: CLOUD MODE (Render)
-    // We will paste the JSON text into a secure variable called "FIREBASE_CREDS" on Render.
-    // The server parses that text back into an object.
     serviceAccount = JSON.parse(process.env.FIREBASE_CREDS);
     console.log("☁️  Running in Cloud Mode");
 } else {
-    // OPTION B: LOCAL MODE (Your Laptop)
-    // We just read the file sitting in the folder.
     serviceAccount = require('./serviceAccountKey.json');
     console.log("💻 Running in Local Mode");
 }
@@ -28,63 +23,67 @@ const db = admin.firestore();
 const app = express();
 app.use(cors());
 app.use(express.json());
-// ----------------------------------
 
-console.log("🔥 Firebase Firestore Connected");
+console.log("🔥 Firebase Auth Connected");
 
-// --- Supabase Connection ---
+// --- SUPABASE CONNECTION (SYSTEM DB) ---
 const { createClient } = require('@supabase/supabase-js');
 
-// ⚠️ IMPORTANT: You will need to add these to your Render Environment Variables later!
 const supabaseUrl = process.env.SUPABASE_URL || 'https://chqznpoidwgoptxlzxwo.supabase.co';
 const supabaseKey = process.env.SUPABASE_ANON_KEY || 'sb_publishable_F_F1cVmxBzRdl8SDYg_RCg_yNZTYfAg';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// --- HELPER FUNCTIONS ---
+console.log("⚡ Supabase Database Connected");
 
-// Middleware to verify JWT Token
+// --- HELPER FUNCTIONS ---
 const verifyToken = (req, res, next) => {
     const token = req.headers['x-access-token'];
     if (!token) return res.json({ status: 'error', error: 'No token provided' });
 
     try {
         const decoded = jwt.verify(token, 'secret123');
-        req.userEmail = decoded.email; // We use Email as the ID in Firestore
+        req.userEmail = decoded.email;
         next();
     } catch (error) {
         return res.json({ status: 'error', error: 'Invalid Token' });
     }
 };
 
-// 2. ROUTES
+// ==========================================
+// 1. AUTHENTICATION (FIREBASE PRIMARY)
+// ==========================================
 
-// REGISTER (Create a document in 'users' collection)
+// REGISTER (Firebase Auth + Supabase Profile)
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, password } = req.body;
 
-        // Check if user exists
+        // 1. Check Firebase if user exists
         const userRef = db.collection('users').doc(email);
         const doc = await userRef.get();
-
         if (doc.exists) {
             return res.json({ status: 'error', error: 'Email already exists' });
         }
 
         const newPassword = await bcrypt.hash(password, 10);
 
-        // Create new user document
+        // 2. Save pure auth credentials to Firebase
         await userRef.set({
-            name: name,
             email: email,
             password: newPassword,
-            role: 'user',
+            role: 'user'
+        });
+
+        // 3. Setup Wallet & Profile in Supabase
+        await supabase.from('user_profiles').insert([{
+            email: email,
+            name: name,
             walletBalance: 0,
             ecoPoints: 0,
             logs: [],
             redemptions: [],
-            createdAt: new Date().toISOString()
-        });
+            role: 'user'
+        }]);
 
         res.json({ status: 'ok' });
     } catch (err) {
@@ -93,21 +92,18 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// LOGIN (Read document from 'users' collection)
+// LOGIN (Firebase Only) - Completely untouched!
 app.post('/api/login', async (req, res) => {
     try {
         const userRef = db.collection('users').doc(req.body.email);
         const doc = await userRef.get();
 
-        if (!doc.exists) {
-            return res.json({ status: 'error', user: false });
-        }
+        if (!doc.exists) return res.json({ status: 'error', user: false });
 
         const userData = doc.data();
         const isValid = await bcrypt.compare(req.body.password, userData.password);
 
         if (isValid) {
-            // Generate Token using Email as ID
             const token = jwt.sign({ email: userData.email, role: userData.role }, 'secret123');
             return res.json({ status: 'ok', token: token, role: userData.role });
         } else {
@@ -118,33 +114,38 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// DASHBOARD (Fetch User Data)
+// ==========================================
+// 2. SYSTEM DATA (SUPABASE PRIMARY)
+// ==========================================
+
+// DASHBOARD (Fetch from Supabase)
 app.get('/api/dashboard', verifyToken, async (req, res) => {
     try {
-        const userRef = db.collection('users').doc(req.userEmail);
-        const doc = await userRef.get();
+        const { data: user, error } = await supabase
+            .from('user_profiles')
+            .select('*')
+            .eq('email', req.userEmail)
+            .single();
 
-        if (!doc.exists) return res.json({ status: 'error', error: 'User not found' });
+        if (error || !user) return res.json({ status: 'error', error: 'User not found in database' });
 
-        res.json({ status: 'ok', user: doc.data() });
+        res.json({ status: 'ok', user: user });
     } catch (error) {
         res.json({ status: 'error', error: 'Server Error' });
     }
 });
 
-// ADD WASTE (Update Wallet & Arrays)
+// ADD WASTE (Update Supabase Wallets & Arrays)
 app.post('/api/add-waste', verifyToken, async (req, res) => {
     try {
-        const userRef = db.collection('users').doc(req.userEmail);
-        const doc = await userRef.get();
-        const userData = doc.data();
+        // 1. Get current data
+        const { data: user } = await supabase.from('user_profiles').select('*').eq('email', req.userEmail).single();
+
         const locationName = req.body.location || 'Smart Bin (General)';
         const type = req.body.wasteType || 'Plastic';
-
         let reward = (type === 'Plastic') ? 10 : 7;
         let points = (type === 'Plastic') ? 50 : 20;
 
-        // Create the Log Object
         const newLog = {
             date: new Date().toISOString(),
             wasteType: type,
@@ -153,12 +154,17 @@ app.post('/api/add-waste', verifyToken, async (req, res) => {
             location: locationName
         };
 
-        // ATOMIC UPDATE (Safe math for Firestore)
-        await userRef.update({
-            walletBalance: admin.firestore.FieldValue.increment(reward),
-            ecoPoints: admin.firestore.FieldValue.increment(points),
-            logs: admin.firestore.FieldValue.arrayUnion(newLog)
-        });
+        // 2. Calculate new values
+        const newWallet = user.walletBalance + reward;
+        const newPoints = user.ecoPoints + points;
+        const newLogs = [...user.logs, newLog]; // Append new log to array
+
+        // 3. Update Supabase
+        await supabase.from('user_profiles').update({
+            walletBalance: newWallet,
+            ecoPoints: newPoints,
+            logs: newLogs
+        }).eq('email', req.userEmail);
 
         res.json({ status: 'ok', rewardAdded: reward });
 
@@ -168,40 +174,36 @@ app.post('/api/add-waste', verifyToken, async (req, res) => {
     }
 });
 
-// REDEEM (Update Wallet & Arrays)
+// REDEEM (Update Supabase Wallets & Arrays)
 app.post('/api/redeem', verifyToken, async (req, res) => {
     try {
-        const userRef = db.collection('users').doc(req.userEmail);
-        const doc = await userRef.get();
-        const userData = doc.data();
+        const { data: user } = await supabase.from('user_profiles').select('*').eq('email', req.userEmail).single();
 
         const cost = Number(req.body.cost);
         const { item, type } = req.body;
+        let newWallet = user.walletBalance;
+        let newPoints = user.ecoPoints;
 
         if (type === 'money') {
-            if (userData.walletBalance < cost) return res.json({ status: 'error', message: 'Insufficient Funds' });
-
-            await userRef.update({
-                walletBalance: admin.firestore.FieldValue.increment(-cost) // Negative increment = Subtraction
-            });
+            if (user.walletBalance < cost) return res.json({ status: 'error', message: 'Insufficient Funds' });
+            newWallet -= cost;
         } else {
-            if (userData.ecoPoints < cost) return res.json({ status: 'error', message: 'Insufficient Points' });
-
-            await userRef.update({
-                ecoPoints: admin.firestore.FieldValue.increment(-cost)
-            });
+            if (user.ecoPoints < cost) return res.json({ status: 'error', message: 'Insufficient Points' });
+            newPoints -= cost;
         }
 
         const newRedemption = {
             date: new Date().toISOString(),
-            item,
-            cost,
-            type
+            item, cost, type
         };
 
-        await userRef.update({
-            redemptions: admin.firestore.FieldValue.arrayUnion(newRedemption)
-        });
+        const newRedemptions = [...user.redemptions, newRedemption];
+
+        await supabase.from('user_profiles').update({
+            walletBalance: newWallet,
+            ecoPoints: newPoints,
+            redemptions: newRedemptions
+        }).eq('email', req.userEmail);
 
         res.json({ status: 'ok' });
     } catch (error) {
@@ -210,43 +212,30 @@ app.post('/api/redeem', verifyToken, async (req, res) => {
     }
 });
 
-// ADMIN: GET ALL USERS
+// ADMIN: GET ALL USERS (From Supabase)
 app.get('/api/admin/users', async (req, res) => {
     try {
-        const usersSnapshot = await db.collection('users').get();
-        const usersList = [];
+        const { data: users, error } = await supabase.from('user_profiles').select('*');
+        if (error) throw error;
 
-        usersSnapshot.forEach(doc => {
-            // We include the doc ID (email) as _id so the Frontend Key doesn't break
-            usersList.push({ ...doc.data(), _id: doc.id });
-        });
-
+        // Map over users to inject _id so the frontend tables don't break
+        const usersList = users.map(u => ({ ...u, _id: u.email }));
         res.json({ status: 'ok', users: usersList });
     } catch (err) {
         res.json({ status: 'error' });
     }
 });
 
-// ==========================================
-// NEW: GET LIVE BIN STATUSES (FROM SUPABASE)
-// ==========================================
+// GET BINS (From Supabase)
 app.get('/api/bins', async (req, res) => {
     try {
-        // Fetch all rows from the 'bins' table
-        const { data: bins, error } = await supabase
-            .from('bins')
-            .select('*');
-
+        const { data: bins, error } = await supabase.from('bins').select('*');
         if (error) throw error;
-
-        // Send them to the frontend
         res.json({ status: 'ok', bins: bins });
-
     } catch (error) {
-        console.log("Supabase Error:", error);
         res.json({ status: 'error', error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on ${PORT} (Hybrid Auth/DB Mode)`));
