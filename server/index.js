@@ -237,5 +237,27 @@ app.get('/api/bins', async (req, res) => {
     }
 });
 
+// ==========================================
+// LEADERBOARD (Top Eco-Warriors)
+// ==========================================
+app.get('/api/leaderboard', async (req, res) => {
+    try {
+        // Fetch only names and points, ordered highest to lowest, limit top 50
+        const { data: leaders, error } = await supabase
+            .from('user_profiles')
+            .select('name, ecoPoints')
+            .order('ecoPoints', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        res.json({ status: 'ok', leaderboard: leaders });
+
+    } catch (error) {
+        console.log("Leaderboard Error:", error);
+        res.json({ status: 'error', error: 'Could not fetch leaderboard' });
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`✅ Server running on ${PORT} (Hybrid Auth/DB Mode)`));
