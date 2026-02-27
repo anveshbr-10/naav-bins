@@ -4,6 +4,6 @@ Yet to complete tasks
 2. Redeem buttons redirecting to those websites
 3. Maps of their campus (Done)
 4. UI even better with dark theme
-5. Bin full or active status color red or green
+5. Bin full or active status color red or green (Done)
 6. About Page in Landing (Done)
 7. Contact Form in Landing with email trigger (Done)

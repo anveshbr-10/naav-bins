@@ -27,8 +27,8 @@ export default function SmartBinMap() {
     const bins = [
         { id: 1, name: "Main Building Bin", lat: 12.963695293135315, lng: 77.50602831316505, status: "Active" },
         { id: 2, name: "Sports Complex Bin", lat: 12.965048774554218, lng: 77.50595464214099, status: "Active" },
-        { id: 3, name: "Rock Garden Bin", lat: 12.964168121389369, lng: 77.5054484020979, status: "Active" },
-        { id: 4, name: "Edu Hub Bin", lat: -20.28894357561763, lng: 57.44281144392436, status: "Active" },
+        { id: 3, name: "Rock Garden Bin", lat: 12.964168121389369, lng: 77.5054484020979, status: "Full" }, // Changed to Full to test
+        { id: 4, name: "Edu Hub Bin", lat: -20.28894357561763, lng: 57.44281144392436, status: "Inactive" }, // Added Inactive to test
         { id: 5, name: "Executive Hub Bin", lat: -20.28866234482705, lng: 57.442445273574265, status: "Active" },
     ];
 
@@ -41,7 +41,7 @@ export default function SmartBinMap() {
             mapInstanceRef.current = map;
 
             // Add Satellite Layer (Default)
-            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
                 attribution: 'Tiles &copy; Esri'
             }).addTo(map);
 
@@ -49,16 +49,25 @@ export default function SmartBinMap() {
             bins.forEach(bin => {
                 const marker = L.marker([bin.lat, bin.lng]).addTo(map);
 
+                // --- NEW LOGIC: Check if Active ---
+                const isActive = bin.status === 'Active';
+                const statusColor = isActive ? '#10b981' : '#ef4444'; // Green if Active, Red otherwise
+
+                // Style the button differently if it's inactive (greyed out)
+                const buttonStyle = isActive
+                    ? "background-color: #059669; color: white; cursor: pointer;"
+                    : "background-color: #9ca3af; color: white; cursor: not-allowed; opacity: 0.8;";
+
                 // Create a Custom Popup HTML
                 const popupContent = document.createElement('div');
                 popupContent.innerHTML = `
                 <div style="text-align: center; font-family: sans-serif;">
                     <h3 style="margin: 0; font-weight: bold; font-size: 16px;">${bin.name}</h3>
-                    <span style="background-color: ${bin.status === 'Full' ? '#ef4444' : '#10b981'}; color: white; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: bold;">
+                    <span style="background-color: ${statusColor}; color: white; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: bold;">
                         ${bin.status}
                     </span>
                     <br/>
-                    <button id="scan-btn-${bin.id}" style="margin-top: 8px; background-color: #059669; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                    <button id="scan-btn-${bin.id}" style="margin-top: 8px; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; ${buttonStyle}">
                         Scan Here
                     </button>
                 </div>
@@ -66,6 +75,13 @@ export default function SmartBinMap() {
 
                 // Add click listener to the button inside popup
                 popupContent.querySelector(`#scan-btn-${bin.id}`).addEventListener('click', () => {
+
+                    // --- NEW LOGIC: Block navigation if not Active ---
+                    if (!isActive) {
+                        alert(`Sorry, the ${bin.name} is currently ${bin.status}. Please find an active bin!`);
+                        return; // This stops the code from running further
+                    }
+
                     // 1. Save the name to Browser Memory (LocalStorage)
                     localStorage.setItem('current_bin_location', bin.name);
                     console.log("Location Saved:", bin.name); // Debug log
