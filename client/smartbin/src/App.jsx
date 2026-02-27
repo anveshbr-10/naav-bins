@@ -21,6 +21,7 @@ function App() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/map" element={<SmartBinMap />} />
         <Route path="/about" element={<About />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
       </Routes>
     </BrowserRouter>
   );
