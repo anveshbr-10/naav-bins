@@ -20,4 +20,7 @@
     "jsonwebtoken": "^9.0.2",
     "nodemon": "^3.1.11"
   }
+  "engines": {
+    "node": "18.x"
+  }
 }
