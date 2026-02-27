@@ -32,6 +32,14 @@ app.use(express.json());
 
 console.log("🔥 Firebase Firestore Connected");
 
+// --- Supabase Connection ---
+const { createClient } = require('@supabase/supabase-js');
+
+// ⚠️ IMPORTANT: You will need to add these to your Render Environment Variables later!
+const supabaseUrl = process.env.SUPABASE_URL || 'https://chqznpoidwgoptxlzxwo.supabase.co';
+const supabaseKey = process.env.SUPABASE_ANON_KEY || 'sb_publishable_F_F1cVmxBzRdl8SDYg_RCg_yNZTYfAg';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 // --- HELPER FUNCTIONS ---
 
 // Middleware to verify JWT Token
@@ -219,4 +227,25 @@ app.get('/api/admin/users', async (req, res) => {
     }
 });
 
-app.listen(5000, () => console.log("✅ Server running on port 5000 (Firebase Mode)"));
+// ==========================================
+// NEW: GET LIVE BIN STATUSES (FROM SUPABASE)
+// ==========================================
+app.get('/api/bins', async (req, res) => {
+    try {
+        // Fetch all rows from the 'bins' table
+        const { data: bins, error } = await supabase
+            .from('bins')
+            .select('*');
+
+        if (error) throw error;
+
+        // Send them to the frontend
+        res.json({ status: 'ok', bins: bins });
+
+    } catch (error) {
+        console.log("Supabase Error:", error);
+        res.json({ status: 'error', error: error.message });
+    }
+});
+
+app.listen(5000, () => console.log("✅ Server running on port 5000 (Firebase & Supabase Mode)"));
