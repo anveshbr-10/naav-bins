@@ -11,10 +11,24 @@ export default function Dashboard() {
   // Refresh function to reload data after redemption
   const fetchUserData = () => {
     const token = localStorage.getItem('token');
-    if (!token) navigate('/login');
-    // UPDATED URL TO NEW BACKEND
-    axios.get('https://naav-bins.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
-      .then(res => { if (res.data.status === 'ok') setUser(res.data.user); });
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+    axios.get('https://smartbin-api-c7g4.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
+      .then(res => {
+        if (res.data.status === 'ok') {
+          setUser(res.data.user);
+        } else {
+          localStorage.removeItem('token');
+          navigate('/login');
+        }
+      })
+      .catch(err => {
+        console.error("Dashboard fetch error", err);
+        localStorage.removeItem('token');
+        navigate('/login');
+      });
   };
 
   useEffect(() => { fetchUserData(); }, []);
@@ -26,7 +40,7 @@ export default function Dashboard() {
     if (!window.confirm(`Are you sure you want to redeem ${item} for ${cost} ${type === 'money' ? 'Rupees' : 'Points'}?`)) return;
 
     // UPDATED URL TO NEW BACKEND
-    const res = await axios.post('https://naav-bins.onrender.com/api/redeem', { item, cost, type }, {
+    const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/redeem', { item, cost, type }, {
       headers: { 'x-access-token': localStorage.getItem('token') }
     });
 

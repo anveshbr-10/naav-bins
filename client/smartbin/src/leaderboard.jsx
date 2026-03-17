@@ -12,7 +12,7 @@ export default function Leaderboard() {
         const fetchLeaderboard = async () => {
             try {
                 // Make sure this points to your live Render URL!
-                const res = await axios.get('https://naav-bins.onrender.com/api/leaderboard');
+                const res = await axios.get('https://smartbin-api-c7g4.onrender.com/api/leaderboard');
                 if (res.data.status === 'ok') {
                     setLeaders(res.data.leaderboard);
                 }

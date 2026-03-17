@@ -33,7 +33,7 @@ export default function SmartBinMap() {
 
             try {
                 // 1. FETCH REAL-TIME DATA FROM YOUR LIVE RENDER SERVER
-                const res = await axios.get('https://naav-bins.onrender.com/api/bins');
+                const res = await axios.get('https://smartbin-api-c7g4.onrender.com/api/bins');
                 if (res.data.status === 'ok') {
                     activeBins = res.data.bins;
                 }
