@@ -26,7 +26,6 @@ export default function About() {
         // Grab all the data from the form
         const formData = new FormData(e.target);
 
-        // ⚠️ PASTE YOUR WEB3FORMS KEY HERE
         formData.append("access_key", "4057803a-c08b-4527-884b-b79a200618b6");
 
         try {
