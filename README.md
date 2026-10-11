@@ -1,69 +1,54 @@
 # Naav Bins
 
-Naav Bins is an AI-powered waste management and reward platform designed to make recycling more engaging, efficient, and community-driven. The app lets users scan waste items, classify them using machine learning, identify the correct bin, and earn rewards in the form of wallet credits and eco points.
+Naav Bins is a full-stack smart waste management platform that helps users recycle more responsibly and earn rewards for doing so. The app combines AI-based waste identification, card-based eco incentives, nearby bin discovery, and a simple admin dashboard for monitoring impact.
 
 ## Overview
 
-The platform combines:
-- AI-based waste recognition
-- interactive smart-bin guidance
-- digital wallet and redemption system
-- user dashboard and leaderboard
-- admin monitoring for operational insights
+This repository contains a React + Vite frontend and a Node.js + Express backend. The app is designed around a recycling workflow:
 
-This project is built as a full-stack web application using a React frontend and a Node.js/Express backend, with Firebase and Supabase powering authentication and app data.
+1. User registers or logs in
+2. User finds a nearby smart bin on the map
+3. User scans a QR code at the bin
+4. Camera-based AI identifies the waste type
+5. System updates wallet balance and eco points
+6. User can redeem rewards or review leaderboard and impact data
 
-## Key Features
+The backend authenticates users with Firebase and stores user profile and rewards data in Supabase.
 
-### AI Waste Recognition
-- Real-time waste classification using TensorFlow.js and Teachable Machine
-- Supports categories such as Plastic and Organic
-- Helps users decide the correct bin before disposal
+## Features
 
-### Smart Bin Experience
-- QR-based presence validation before scan submission
-- Waste type detection and guided segregation
-- Bin suggestions and user-friendly disposal flow
-
-### Rewards and Wallet System
-- Earn rewards for recycling activity
-- Example reward logic:
-  - Plastic: ₹10 + 50 Eco Points
-  - Organic: ₹7 + 20 Eco Points
-- Track wallet balance, redemption history, and eco-point activity
-- Redeem points or wallet balance for rewards and vouchers
-
-### Dashboard and Analytics
-- Personal dashboard with activity logs
-- Waste distribution insights
-- Earnings trend charts using Recharts
-- Leaderboard for eco-conscious users
-
-### Admin Console
-- Overview of total users, distributed funds, and impact metrics
-- User management and searchable profile lists
-- Monitoring of wallet status and user activity
+- Smart-bin QR flow with location-based scan initiation
+- AI waste classification using TensorFlow.js + Teachable Machine
+- Wallet and eco-point tracking
+- Redemption system for money and points
+- Personal dashboard with charts and logs
+- Leaderboard for top eco-conscious users
+- Nearby bin map using Leaflet
+- Admin portal for viewing registered users and impact metrics
+- Waste type reward guide for Plastic, Metal, Paper/Cardboard, Organic, Glass, and Other Trash
 
 ## Tech Stack
 
 ### Frontend
-- React + Vite
+- React 19
+- Vite
 - Tailwind CSS
+- React Router
 - Recharts
+- Leaflet + React Leaflet
 - Lucide React
 - React Webcam
-- Leaflet + React Leaflet
+- html5-qrcode
 - Axios
 
 ### Backend
 - Node.js
 - Express.js
-
-### Authentication and Data
+- JWT authentication
+- bcryptjs
 - Firebase Admin SDK
-- Firebase Firestore
-- Supabase
-- JWT and bcryptjs
+- Firestore
+- Supabase JS client
 
 ### AI / ML
 - TensorFlow.js
@@ -88,19 +73,53 @@ naav-bins/
 │   └── serviceAccountKey.json
 ├── package.json
 ├── README.md
-└── .gitignore
+├── .gitignore
+└── todos.txt
 ```
+
+## Core App Flow
+
+### User Journey
+- Register via `/register`
+- Login via `/login`
+- Open `/dashboard` to see wallet, eco points, charts, and redemption options
+- Open `/map` to locate nearby bins
+- Open `/scan` to complete QR + AI-driven waste validation
+- View leaderboard via `/leaderboard`
+
+### Admin Journey
+- Admin users can visit `/admin`
+- The portal summarizes total users, distributed funds, and estimated CO2 savings
+- Admins can search and inspect user profiles
+
+## Backend API
+
+The backend exposes these main endpoints:
+
+```text
+POST /api/register
+POST /api/login
+GET  /api/dashboard
+POST /api/add-waste
+POST /api/redeem
+GET  /api/admin/users
+GET  /api/bins
+GET  /api/leaderboard
+```
+
+The server uses Firebase Auth-like credential storage in Firestore and Supabase for user profile and reward data. The authentication middleware expects a JWT in the `x-access-token` header.
 
 ## Prerequisites
 
-Before running the project locally, make sure you have:
-- Node.js 18 or newer
-- npm
-- Firebase project setup
-- Supabase project setup
-- A Teachable Machine model URL (for AI classification)
+Before running the project locally, ensure you have:
 
-## Setup Instructions
+- Node.js 18+
+- npm
+- Firebase project with a service account
+- Supabase project and API keys
+- A Teachable Machine model URL for the scanner
+
+## Local Setup
 
 ### 1) Install backend dependencies
 
@@ -111,13 +130,7 @@ npm install
 
 ### 2) Configure Firebase and Supabase
 
-The backend expects Firebase credentials and Supabase configuration.
-
-#### Option A: Use Firebase service account JSON
-Create a file named `server/serviceAccountKey.json` with your Firebase Admin SDK credentials.
-
-#### Option B: Use environment variable
-Set the following environment variable in your shell or `.env` file:
+Create a Firebase service account JSON file in `server/serviceAccountKey.json` or set the following environment variable:
 
 ```bash
 FIREBASE_CREDS='{"type":"service_account", ... }'
@@ -126,6 +139,8 @@ SUPABASE_ANON_KEY="your-supabase-anon-key"
 PORT=5000
 ```
 
+The backend will also fall back to `server/serviceAccountKey.json` if `FIREBASE_CREDS` is not present.
+
 ### 3) Start the backend
 
 ```bash
@@ -133,7 +148,7 @@ cd server
 node index.js
 ```
 
-The server should start successfully and connect to Firebase and Supabase.
+You should see a Firebase and Supabase connection message, followed by the backend listening on the configured port.
 
 ### 4) Install frontend dependencies
 
@@ -155,51 +170,69 @@ Then open:
 http://localhost:5173
 ```
 
-## AI Model Configuration
+## Important Note for Local Development
 
-The app uses a Teachable Machine model URL in the frontend scanner logic.
+The frontend currently points to the deployed Render API URL:
 
-Open the scanner component and replace the model URL with your own imported model:
-
-```js
-const URL = "https://teachablemachine.withgoogle.com/models/YOUR_MODEL_ID/";
+```text
+https://smartbin-api-c7g4.onrender.com
 ```
 
-This model should classify the waste into labels such as:
+If you want to run the complete app locally, update the API URLs in the frontend files under `client/smartbin/src/` to point to your local backend (for example `http://localhost:5000`).
+
+## AI Model Configuration
+
+The scanner uses a Teachable Machine model hosted at a public URL in the frontend:
+
+```js
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/SbH77oNkD/";
+```
+
+This model is expected to classify items into labels such as:
+
 - Plastic
+- Metal
+- Paper / Cardboard
 - Organic
+- Glass
+- Other Trash
+
+If you want to use your own model, replace the URL in `client/smartbin/src/scanner.jsx`.
 
 ## Admin Access
 
-To access the admin dashboard:
-1. Register a new user in the app
-2. Open your Firebase Firestore database
-3. Go to the `users` collection
-4. Update the user role from `user` to `admin`
+To turn a user into an admin:
+
+1. Register a user
+2. Open the Firebase Firestore `users` collection
+3. Find the user document matching their email
+4. Change `role` from `user` to `admin`
 5. Log out and log back in
 
-## Usage Flow
+## Usage Example
 
-1. User registers or logs in
-2. User scans waste via the app
-3. AI identifies the waste category
-4. System directs the user to the correct bin
-5. User earns wallet credit and eco points
-6. Wallet and redemption history are updated
-7. Admin monitors user activity and platform stats
+```text
+1. Register a user account
+2. Visit the dashboard
+3. Find a nearby bin on the map
+4. Scan the QR code
+5. Capture a recyclable item with the camera
+6. The app identifies the material and awards points
+7. View rewards, redeem them, or check leaderboard rankings
+```
 
 ## Future Improvements
 
-- Hardware integration for automated bin lid opening
-- Expanded waste categories and classification accuracy
-- Leaderboard and gamified recycling challenges
-- Stripe or Razorpay integration for payout processing
-- Location-based smart bin analytics
+- Add more waste categories and better ML accuracy
+- Support automated bin lid handling and hardware integration
+- Expand gamification with badges and challenge-based rewards
+- Add payment integrations for withdrawal flows
+- Improve map analytics and location-based smart-bin optimization
 
 ## License
 
-This project is currently distributed without a formal license declaration.
+This repository does not currently declare a formal license.
 
 ## Notes
 
-This repository is a prototype / demo application focused on waste segregation, digital rewards, and environmental awareness. It is suitable for hackathon, startup MVP, and campus project use cases.
+This project is intended as a smart-city and sustainability prototype for educational, hackathon, or MVP use. It demonstrates how AI, incentives, and local civic technology can be combined to encourage better waste segregation behavior.

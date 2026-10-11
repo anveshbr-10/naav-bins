@@ -143,8 +143,17 @@ app.post('/api/add-waste', verifyToken, async (req, res) => {
 
         const locationName = req.body.location || 'Smart Bin (General)';
         const type = req.body.wasteType || 'Plastic';
-        let reward = (type === 'Plastic') ? 10 : 7;
-        let points = (type === 'Plastic') ? 50 : 20;
+
+        const REWARD_MAP = {
+        'Plastic':           { reward: 25, points: 125 },
+        'Metal':             { reward: 30, points: 150 },
+        'Paper / Cardboard': { reward: 10, points: 50  },
+        'Organic':           { reward: 5,  points: 25  },
+        'Glass':             { reward: 15, points: 75  },
+        'Other Trash':       { reward: 8,  points: 40  },
+        };
+
+        const { reward, points } = REWARD_MAP[type] || { reward: 5, points: 25 };
 
         const newLog = {
             date: new Date().toISOString(),
