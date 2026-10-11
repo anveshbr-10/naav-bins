@@ -37,3 +37,20 @@ build/output.txt
 node_modules
 server/serviceAccountKey.json
 .env
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

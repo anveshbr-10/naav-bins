@@ -25,7 +25,7 @@ export default function SmartBinMap() {
     // State to handle the loading screen while waiting for Supabase
     const [isLoading, setIsLoading] = useState(true);
 
-    const centerPosition = [13.0174250022574, 77.5661965188955];
+    const centerPosition = [12.964178810211015, 77.50544033094327];
 
     useEffect(() => {
         const fetchBinsAndInitMap = async () => {

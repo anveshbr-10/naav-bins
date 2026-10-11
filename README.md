@@ -1,164 +1,205 @@
-# Smart-Bin
-♻️ SmartBin - AI-Powered Waste Management System
-SmartBin is a full-stack MERN application designed to revolutionize waste management. It uses Artificial Intelligence to identify waste types, guides users on proper segregation (Plastic vs. Organic), and incentivizes recycling through a digital wallet and reward point system.
+# Naav Bins
 
-🚀 Features
-🤖 AI & Hardware Integration
-AI Object Detection: Uses TensorFlow.js (Teachable Machine) to distinguish between Plastic and Organic/General waste in real-time.
+Naav Bins is an AI-powered waste management and reward platform designed to make recycling more engaging, efficient, and community-driven. The app lets users scan waste items, classify them using machine learning, identify the correct bin, and earn rewards in the form of wallet credits and eco points.
 
-Smart Segregation: Dynamically guides users to the correct bin:
+## Overview
 
-🟡 Yellow Bin for Plastic.
+The platform combines:
+- AI-based waste recognition
+- interactive smart-bin guidance
+- digital wallet and redemption system
+- user dashboard and leaderboard
+- admin monitoring for operational insights
 
-🔵 Blue Bin for Organic/Paper.
+This project is built as a full-stack web application using a React frontend and a Node.js/Express backend, with Firebase and Supabase powering authentication and app data.
 
-QR Code Integration: Ensures the user is physically present at a Smart Bin before scanning waste.
+## Key Features
 
-💰 Economy & Wallet
-Variable Rewards:
+### AI Waste Recognition
+- Real-time waste classification using TensorFlow.js and Teachable Machine
+- Supports categories such as Plastic and Organic
+- Helps users decide the correct bin before disposal
 
-Plastic Waste: ₹10 + 50 Eco Points.
+### Smart Bin Experience
+- QR-based presence validation before scan submission
+- Waste type detection and guided segregation
+- Bin suggestions and user-friendly disposal flow
 
-Organic Waste: ₹7 + 20 Eco Points.
+### Rewards and Wallet System
+- Earn rewards for recycling activity
+- Example reward logic:
+  - Plastic: ₹10 + 50 Eco Points
+  - Organic: ₹7 + 20 Eco Points
+- Track wallet balance, redemption history, and eco-point activity
+- Redeem points or wallet balance for rewards and vouchers
 
-Digital Wallet: Real-time balance updates and transaction history (Credits & Debits).
+### Dashboard and Analytics
+- Personal dashboard with activity logs
+- Waste distribution insights
+- Earnings trend charts using Recharts
+- Leaderboard for eco-conscious users
 
-Redemption System:
+### Admin Console
+- Overview of total users, distributed funds, and impact metrics
+- User management and searchable profile lists
+- Monitoring of wallet status and user activity
 
-Redeem Eco Points for Movie Vouchers, Bus Passes, and Metro Cards.
+## Tech Stack
 
-Withdraw wallet balance to a bank account.
+### Frontend
+- React + Vite
+- Tailwind CSS
+- Recharts
+- Lucide React
+- React Webcam
+- Leaflet + React Leaflet
+- Axios
 
-📊 User Dashboard
-Data Visualization: Interactive charts (Recharts) showing "Earnings Trend" and "Waste Distribution".
+### Backend
+- Node.js
+- Express.js
 
-Activity Logs: Detailed history of every item scanned and reward earned.
+### Authentication and Data
+- Firebase Admin SDK
+- Firebase Firestore
+- Supabase
+- JWT and bcryptjs
 
-🛡️ Admin Command Center
-Live Stats: Aggregate view of total users, total money distributed, and CO2 saved.
+### AI / ML
+- TensorFlow.js
+- Teachable Machine
 
-User Management: Searchable database of all registered users with their wallet statuses.
+## Project Structure
 
-🛠️ Tech Stack
-Frontend: React.js (Vite), Tailwind CSS, Recharts, Lucide React, React Webcam, Axios.
+```text
+naav-bins/
+├── client/
+│   └── smartbin/
+│       ├── public/
+│       ├── src/
+│       ├── index.html
+│       ├── package.json
+│       ├── vite.config.js
+│       ├── tailwind.config.js
+│       └── postcss.config.js
+├── server/
+│   ├── index.js
+│   ├── package.json
+│   └── serviceAccountKey.json
+├── package.json
+├── README.md
+└── .gitignore
+```
 
-Backend: Node.js.
+## Prerequisites
 
-Database: Firebase (Firestore).
+Before running the project locally, make sure you have:
+- Node.js 18 or newer
+- npm
+- Firebase project setup
+- Supabase project setup
+- A Teachable Machine model URL (for AI classification)
 
-AI/ML: Google Teachable Machine (TensorFlow.js).
+## Setup Instructions
 
-Authentication: JWT (JSON Web Tokens) & Bcrypt.
+### 1) Install backend dependencies
 
-📂 Project Structure
-
-NAAV-BINS/                  # Project Root
-│
-├── client/                 # Frontend Container
-│   │
-│   ├── smartbin/           # The Active React + Vite Application
-│   │   ├── public/         # Public static assets
-│   │   ├── src/            # Main Source Code
-│   │   │   ├── assets/     # Images and icons
-│   │   │   ├── App.css     # General styles
-│   │   │   ├── App.jsx     # Main Application Router
-│   │   │   ├── index.css   # Tailwind Imports & Global CSS
-│   │   │   └── main.jsx    # React Entry Point
-│   │   │
-│   │   ├── index.html          # HTML Entry Point
-│   │   ├── tailwind.config.js  # Tailwind CSS Configuration
-│   │   ├── postcss.config.js   # PostCSS Configuration
-│   │   ├── vite.config.js      # Vite Bundler Configuration
-│   │   └── package.json        # Frontend Dependencies & Scripts
-│   │
-│   └── package.json        # (Root client dependencies)
-│
-├── server/                 # Backend Directory
-│   ├── index.js            # Main Server, Database & API Logic
-│   └── package.json        # Backend Dependencies
-│
-└── README.md               # Project Documentation
-
-⚙️ Installation & Setup Guide
-Follow these steps to run the project locally on your machine.
-
-Prerequisites
-Node.js installed.
-
-MongoDB Compass installed and running locally.
-
-Step 1: Setup the Backend (Server)
-Open a terminal and navigate to the server folder:
-
-Bash
-
+```bash
 cd server
-Install dependencies:
-
-Bash
-
 npm install
-Start the server:
+```
 
-Bash
+### 2) Configure Firebase and Supabase
 
+The backend expects Firebase credentials and Supabase configuration.
+
+#### Option A: Use Firebase service account JSON
+Create a file named `server/serviceAccountKey.json` with your Firebase Admin SDK credentials.
+
+#### Option B: Use environment variable
+Set the following environment variable in your shell or `.env` file:
+
+```bash
+FIREBASE_CREDS='{"type":"service_account", ... }'
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_ANON_KEY="your-supabase-anon-key"
+PORT=5000
+```
+
+### 3) Start the backend
+
+```bash
+cd server
 node index.js
-You should see: ✅ Firebase Firestore Connected and ✅ Server running on port 5000 (Firebase Mode).
+```
 
-Step 2: Setup the Frontend (Client)
-Open a new terminal and navigate to the client app:
+The server should start successfully and connect to Firebase and Supabase.
 
-Bash
+### 4) Install frontend dependencies
 
+```bash
 cd client/smartbin
-Install dependencies:
-
-Bash
-
 npm install
-Start the React app:
+```
 
-Bash
+### 5) Start the frontend
 
+```bash
+cd client/smartbin
 npm run dev
-Open your browser and go to: http://localhost:5173
+```
 
-🧠 How to Configure the AI Model
-This project relies on a custom-trained image classification model.
+Then open:
 
-Go to Teachable Machine.
+```text
+http://localhost:5173
+```
 
-Train a model with two classes:
+## AI Model Configuration
 
-Class 1: "Plastic" (Bottles, wrappers).
+The app uses a Teachable Machine model URL in the frontend scanner logic.
 
-Class 2: "Organic" (Paper, food waste).
+Open the scanner component and replace the model URL with your own imported model:
 
-Export the model (Upload to Cloud) and copy the URL.
+```js
+const URL = "https://teachablemachine.withgoogle.com/models/YOUR_MODEL_ID/";
+```
 
-Open client/smartbin/src/Scanner.jsx.
+This model should classify the waste into labels such as:
+- Plastic
+- Organic
 
-Replace the URL variable with your link:
+## Admin Access
 
-JavaScript
+To access the admin dashboard:
+1. Register a new user in the app
+2. Open your Firebase Firestore database
+3. Go to the `users` collection
+4. Update the user role from `user` to `admin`
+5. Log out and log back in
 
-const URL = "https://teachablemachine.withgoogle.com/models/GRs1e8MV9/";
-🔑 Admin Access
-To access the Developer Dashboard:
+## Usage Flow
 
-Register a new user on the website.
+1. User registers or logs in
+2. User scans waste via the app
+3. AI identifies the waste category
+4. System directs the user to the correct bin
+5. User earns wallet credit and eco points
+6. Wallet and redemption history are updated
+7. Admin monitors user activity and platform stats
 
-Open Firebase Console.
+## Future Improvements
 
-Go to Firestore Database -> users.
+- Hardware integration for automated bin lid opening
+- Expanded waste categories and classification accuracy
+- Leaderboard and gamified recycling challenges
+- Stripe or Razorpay integration for payout processing
+- Location-based smart bin analytics
 
-Find your user and change the role field from "user" to "admin".
+## License
 
-Logout and Login again to access the Admin Portal.
+This project is currently distributed without a formal license declaration.
 
-🔮 Future Improvements
-Hardware Integration: Connect with Arduino/Raspberry Pi to physically open bin lids based on AI results.
+## Notes
 
-Leaderboard: Global ranking of top recyclers.
-
-Payment Gateway: Integrate Stripe/Razorpay for real money withdrawals.
+This repository is a prototype / demo application focused on waste segregation, digital rewards, and environmental awareness. It is suitable for hackathon, startup MVP, and campus project use cases.
