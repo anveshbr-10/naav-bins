@@ -46,9 +46,7 @@ export default function SmartBinMap() {
 
             // 2. Initialize Map ONLY ONCE
             if (!mapInstanceRef.current && mapContainerRef.current && activeBins.length > 0) {
-                const map = L.map(mapContainerRef.current).setView(
-                    [12.9641681213894, 77.5054484020979],
-                    18);
+                const map = L.map(mapContainerRef.current).setView(centerPosition, 18);
                 mapInstanceRef.current = map;
 
                 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
