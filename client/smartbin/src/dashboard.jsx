@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api, { apiErrorMessage, apiStatus, logout } from './api';
 import RedeemModal from './redeemModal';
+import { formatCo2, formatDateTime } from './format';
 import {
   Wallet, Leaf, LogOut, History, Ticket, Bus, Train, Trophy, MapPin, ScanQrCode, Gift,
   Receipt, RefreshCw, Loader2, TreePine, WifiOff,
@@ -31,16 +32,6 @@ const STATUS_STYLE = {
   Issued:  'bg-green-100 text-green-700 border-green-200',
   Pending: 'bg-amber-100 text-amber-700 border-amber-200',
 };
-
-function formatCo2(kg) {
-  if (!kg) return '0 g';
-  return kg < 1 ? `${Math.round(kg * 1000)} g` : `${kg.toFixed(2)} kg`;
-}
-
-function formatDateTime(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : `${d.toLocaleDateString()} at ${d.toLocaleTimeString()}`;
-}
 
 export default function Dashboard() {
   const navigate = useNavigate();

@@ -174,7 +174,40 @@ function planRedemption(user, { item, now, code, upiId }) {
     };
 }
 
+// Admin status changes for redemptions. The boolean says whether the cost is refunded to the user.
+const STATUS_TRANSITIONS = Object.freeze({
+    money:  Object.freeze({ Pending: Object.freeze({ Paid: false, Rejected: true }) }),
+    points: Object.freeze({ Issued:  Object.freeze({ Claimed: false, Cancelled: true }) }),
+});
+const ADMIN_STATUSES = Object.freeze(['Paid', 'Rejected', 'Claimed', 'Cancelled']);
+
+function planRedemptionStatusChange(user, { code, status, now, adminEmail }) {
+    const redemptions = Array.isArray(user.redemptions) ? user.redemptions : [];
+    const index = redemptions.findIndex(r => r && r.code === code);
+    if (index === -1) return reject(404, 'Redemption not found');
+
+    const record = redemptions[index];
+    const allowed = lookup(STATUS_TRANSITIONS, record.type) || {};
+    const fromStatus = lookup(allowed, record.status);
+    if (!fromStatus || !Object.prototype.hasOwnProperty.call(fromStatus, status)) {
+        return reject(409, `A ${record.status || 'completed'} redemption cannot be marked ${status}.`);
+    }
+
+    const updated = { ...record, status, processedAt: new Date(now).toISOString(), processedBy: adminEmail };
+    const changes = { redemptions: redemptions.map((r, i) => (i === index ? updated : r)) };
+
+    if (fromStatus[status]) {
+        const cost = toNumber(record.cost);
+        if (record.type === 'money') changes.walletBalance = toNumber(user.walletBalance) + cost;
+        else changes.ecoPoints = toNumber(user.ecoPoints) + cost;
+    }
+
+    // guardRedemptions: the write only applies if no other redemption changed status in the meantime.
+    return { changes, result: updated, guardRedemptions: true };
+}
+
 module.exports = {
-    REWARD_MAP, REDEEM_CATALOG, IMPACT,
-    planWasteDeposit, planRedemption, computeImpact, publicCatalog, generateVoucherCode, isValidUpiId,
+    REWARD_MAP, REDEEM_CATALOG, IMPACT, ADMIN_STATUSES,
+    planWasteDeposit, planRedemption, planRedemptionStatusChange,
+    computeImpact, publicCatalog, generateVoucherCode, isValidUpiId,
 };

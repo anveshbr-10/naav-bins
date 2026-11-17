@@ -1,12 +1,16 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSession } from './api';
+import useImpactStats from './useImpactStats';
+import { formatCo2, formatCount, formatInr, formatKg } from './format';
 import { Recycle, ArrowRight, Wallet, Leaf, TreePine } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
   const session = getSession();
   const home = session?.role === 'admin' ? '/admin' : '/dashboard';
+  const { status: statsStatus, stats } = useImpactStats();
+  const show = (fn) => (statsStatus === 'ready' ? fn(stats) : statsStatus === 'loading' ? '…' : '—');
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* 1. NAVBAR */}
@@ -61,7 +65,7 @@ export default function Landing() {
             <span className="text-green-600">Earn by Keeping Your City Clean!</span>
           </h1>
           <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto">
-            Scan. Dispose. Earn. A smarter way to manage waste sustainably. Join thousands of users making a difference today.
+            Scan. Dispose. Earn. A smarter way to manage waste sustainably. Join your campus community in keeping it clean.
           </p>
           {session ? (
             <div className="flex justify-center">
@@ -98,24 +102,27 @@ export default function Landing() {
             <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <Recycle className="text-green-600 w-8 h-8" />
             </div>
-            <h3 className="text-4xl font-bold text-gray-800 mb-2">120 kg</h3>
-            <p className="text-gray-500 font-medium">Waste Collected</p>
+            <h3 className="text-4xl font-bold text-gray-800 mb-2">{show(s => formatCount(s.items))}</h3>
+            <p className="text-gray-500 font-medium">Items Recycled</p>
+            <p className="text-xs text-gray-400 mt-1">{show(s => `~${formatKg(s.wasteKg)} diverted from landfill`)}</p>
           </div>
           {/* Stat 2 */}
           <div className="p-8 rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-center border-b-4 border-blue-500">
             <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <Wallet className="text-blue-600 w-8 h-8" />
             </div>
-            <h3 className="text-4xl font-bold text-gray-800 mb-2">₹8,456</h3>
-            <p className="text-gray-500 font-medium">Money Distributed</p>
+            <h3 className="text-4xl font-bold text-gray-800 mb-2">{show(s => formatInr(s.rewardsIssued))}</h3>
+            <p className="text-gray-500 font-medium">Rewards Earned</p>
+            <p className="text-xs text-gray-400 mt-1">{show(s => `by ${formatCount(s.users)} eco-warrior${s.users === 1 ? '' : 's'}`)}</p>
           </div>
           {/* Stat 3 */}
           <div className="p-8 rounded-2xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-center border-b-4 border-yellow-500">
             <div className="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <TreePine className="text-yellow-600 w-8 h-8" />
             </div>
-            <h3 className="text-4xl font-bold text-gray-800 mb-2">2,341 kg</h3>
-            <p className="text-gray-500 font-medium">CO2 Saved</p>
+            <h3 className="text-4xl font-bold text-gray-800 mb-2">{show(s => formatCo2(s.co2Kg))}</h3>
+            <p className="text-gray-500 font-medium">CO₂ Saved (est.)</p>
+            <p className="text-xs text-gray-400 mt-1">{show(s => `${s.activeBins} of ${s.bins} smart bins active`)}</p>
           </div>
         </div>
       </section>
@@ -126,18 +133,18 @@ export default function Landing() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
             <div>
               <div className="bg-green-800 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl font-bold">1</div>
-              <h3 className="text-xl font-bold mb-2">Scan QR Code</h3>
-              <p className="text-green-200">Find a Smart Bin and scan the code to connect your app.</p>
+              <h3 className="text-xl font-bold mb-2">Scan the Bin</h3>
+              <p className="text-green-200">Find a Smart Bin on the map and scan its QR code to start a session.</p>
             </div>
             <div>
               <div className="bg-green-800 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl font-bold">2</div>
-              <h3 className="text-xl font-bold mb-2">Dispose Waste</h3>
-              <p className="text-green-200">Deposit your waste. Our AI verifies the material type.</p>
+              <h3 className="text-xl font-bold mb-2">Show &amp; Dispose</h3>
+              <p className="text-green-200">Show the item to your camera. Our AI identifies the material and tells you which bin to use.</p>
             </div>
             <div>
               <div className="bg-green-800 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl font-bold">3</div>
               <h3 className="text-xl font-bold mb-2">Earn Rewards</h3>
-              <p className="text-green-200">Get money and Eco-Points instantly in your wallet.</p>
+              <p className="text-green-200">Money and Eco-Points land in your wallet instantly, ready to redeem.</p>
             </div>
           </div>
         </div>

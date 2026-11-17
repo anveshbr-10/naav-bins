@@ -11,8 +11,12 @@ import {
     Mail,
     Phone,
     MapPin,
-    ArrowRight
+    ArrowRight,
+    ArrowLeft,
+    Leaf
 } from 'lucide-react';
+import useImpactStats from './useImpactStats';
+import { formatCo2, formatCount, formatInr, formatKg } from './format';
 
 export default function About() {
     const navigate = useNavigate();
@@ -24,6 +28,8 @@ export default function About() {
     }, [location.hash]);
 
     const [isSending, setIsSending] = React.useState(false);
+    const { status: statsStatus, stats } = useImpactStats();
+    const show = (fn) => (statsStatus === 'ready' ? fn(stats) : statsStatus === 'loading' ? '…' : '—');
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
@@ -51,7 +57,7 @@ export default function About() {
             } else {
                 alert("Failed to send message. Please try again.");
             }
-        } catch (error) {
+        } catch {
             alert("An error occurred. Please check your internet connection.");
         } finally {
             setIsSending(false);
@@ -66,7 +72,13 @@ export default function About() {
       ========================================= */}
 
             {/* 1. Headline & Short Paragraph */}
-            <div className="bg-gradient-to-br from-green-600 to-emerald-800 text-white py-20 px-4 text-center rounded-b-[3rem] shadow-xl">
+            <div className="bg-gradient-to-br from-green-600 to-emerald-800 text-white py-20 px-4 text-center rounded-b-[3rem] shadow-xl relative">
+                <button
+                    onClick={() => navigate('/')}
+                    className="absolute top-6 left-6 flex items-center gap-2 px-3 py-2 bg-white/20 rounded-full hover:bg-white/30 transition backdrop-blur-sm text-sm font-semibold"
+                >
+                    <ArrowLeft size={18} /> Home
+                </button>
                 <div className="max-w-3xl mx-auto">
                     <h1 className="text-4xl md:text-5xl font-extrabold mb-6 animate-fade-in-up">
                         Revolutionizing Waste Management
@@ -103,9 +115,10 @@ export default function About() {
                         </div>
                         <h3 className="text-2xl font-bold text-slate-800 mb-3">Our Solution</h3>
                         <p className="text-slate-600 leading-relaxed">
-                            We deploy "Smart Bins" equipped with AI scanning technology. Users simply scan their
-                            waste, let our AI classify it (Plastic/Non-Plastic), dispose of it correctly, and
-                            earn instant digital wallet rewards for their eco-friendly actions.
+                            Every Smart Bin carries a secure QR code. Users scan it, show their item to the phone
+                            camera, and our AI identifies it as Plastic, Metal, Paper / Cardboard, Glass, Organic
+                            or Other Trash, then tells them which bin to use. Each correctly sorted item earns
+                            instant wallet money and Eco-Points.
                         </p>
                     </div>
                 </div>
@@ -139,22 +152,33 @@ export default function About() {
 
                 {/* 4. Impact Metrics */}
                 <div>
-                    <h2 className="text-center text-3xl font-bold text-slate-800 mb-10">Our Impact So Far</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <h2 className="text-center text-3xl font-bold text-slate-800 mb-2">Our Impact So Far</h2>
+                    <p className="text-center text-sm text-slate-500 mb-10">
+                        {statsStatus === 'error'
+                            ? 'Live figures are unavailable right now.'
+                            : 'Live figures from the platform. Weight and CO₂ are estimates per item type.'}
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
                             <div className="flex justify-center mb-4"><Users className="text-blue-500 w-10 h-10" /></div>
-                            <h4 className="text-4xl font-extrabold text-slate-800 mb-2">500+</h4>
-                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Active Eco-Warriors</p>
+                            <h4 className="text-3xl md:text-4xl font-extrabold text-slate-800 mb-2">{show(s => formatCount(s.users))}</h4>
+                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Eco-Warriors</p>
                         </div>
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
                             <div className="flex justify-center mb-4"><Trash2 className="text-emerald-500 w-10 h-10" /></div>
-                            <h4 className="text-4xl font-extrabold text-slate-800 mb-2">1,200kg</h4>
-                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Waste Segregated</p>
+                            <h4 className="text-3xl md:text-4xl font-extrabold text-slate-800 mb-2">{show(s => formatCount(s.items))}</h4>
+                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Items Recycled</p>
+                            <p className="text-xs text-slate-400 mt-1">{show(s => `~${formatKg(s.wasteKg)} diverted`)}</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
+                            <div className="flex justify-center mb-4"><Leaf className="text-green-600 w-10 h-10" /></div>
+                            <h4 className="text-3xl md:text-4xl font-extrabold text-slate-800 mb-2">{show(s => formatCo2(s.co2Kg))}</h4>
+                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">CO₂ Saved (est.)</p>
                         </div>
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
                             <div className="flex justify-center mb-4"><Trophy className="text-yellow-500 w-10 h-10" /></div>
-                            <h4 className="text-4xl font-extrabold text-slate-800 mb-2">₹15k+</h4>
-                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Rewards Distributed</p>
+                            <h4 className="text-3xl md:text-4xl font-extrabold text-slate-800 mb-2">{show(s => formatInr(s.rewardsIssued))}</h4>
+                            <p className="text-slate-500 font-medium uppercase tracking-wide text-sm">Rewards Earned</p>
                         </div>
                     </div>
                 </div>

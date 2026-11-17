@@ -12,6 +12,7 @@ const { verifyBinQrPayload } = require('./lib/binQr');
 const {
     REWARD_MAP, REDEEM_CATALOG, planWasteDeposit, planRedemption,
     computeImpact, publicCatalog, generateVoucherCode, isValidUpiId,
+    planRedemptionStatusChange, ADMIN_STATUSES,
 } = require('./lib/rewards');
 const { createProfileStore } = require('./lib/profileStore');
 
@@ -169,19 +170,55 @@ const registerLimiter = rateLimit({
 const scanLimiter = rateLimit({ windowMs: MIN, max: 20, keyFn: req => `scan:${req.userEmail}` });
 const writeLimiter = rateLimit({ windowMs: MIN, max: 30, keyFn: req => `write:${req.userEmail}` });
 
-function verifyToken(req, res, next) {
+// Login records are re-checked (cached briefly) so a session ends when its account is deleted, and a
+// token issued to an earlier account with the same email cannot be used on a newly registered one.
+const AUTH_CACHE_MS = 60 * 1000;
+const authCache = new Map(); // email -> { expires, exists, createdSec }
+
+async function getAuthRecord(email) {
+    const now = Date.now();
+    const hit = authCache.get(email);
+    if (hit && hit.expires > now) return hit;
+
+    const doc = await db.collection('users').doc(email).get();
+    const entry = {
+        expires: now + AUTH_CACHE_MS,
+        exists: doc.exists,
+        createdSec: doc.exists && doc.createTime ? doc.createTime.seconds : 0,
+    };
+    if (authCache.size > 5000) {
+        for (const [key, value] of authCache) if (value.expires <= now) authCache.delete(key);
+    }
+    authCache.set(email, entry);
+    return entry;
+}
+
+async function verifyToken(req, res, next) {
     const token = req.headers['x-access-token'];
     if (!token || typeof token !== 'string') return fail(res, 401, 'No token provided');
+
+    let decoded;
     try {
-        const decoded = jwt.verify(token, JWT_SECRET, {
+        decoded = jwt.verify(token, JWT_SECRET, {
             algorithms: ['HS256'], issuer: JWT_ISSUER, audience: AUTH_AUDIENCE,
         });
         if (typeof decoded.email !== 'string') throw new Error('bad payload');
-        req.userEmail = decoded.email;
-        next();
     } catch {
         return fail(res, 401, 'Invalid or expired token');
     }
+
+    try {
+        const record = await getAuthRecord(decoded.email);
+        if (!record.exists || (typeof decoded.iat === 'number' && decoded.iat < record.createdSec)) {
+            return fail(res, 401, 'Your session has ended. Please log in again.');
+        }
+    } catch (err) {
+        console.error('Auth record check failed:', err);
+        return fail(res, 503, 'Sign-in service is temporarily unavailable. Please try again.');
+    }
+
+    req.userEmail = decoded.email;
+    next();
 }
 
 // Role is re-checked against the auth database on every request, so demoting an admin takes effect immediately.
@@ -215,6 +252,11 @@ app.post('/api/register', registerLimiter, async (req, res) => {
     }
 
     const userRef = db.collection('users').doc(email);
+    const rollback = async () => {
+        await userRef.delete().catch(e => console.error('Rollback failed:', e));
+        authCache.delete(email);
+    };
+
     try {
         const passwordHash = await bcrypt.hash(password, 10);
 
@@ -228,16 +270,23 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             throw err;
         }
 
-        const { error: profileError } = await supabase.from('user_profiles').insert([{
-            email, name, walletBalance: 0, ecoPoints: 0, logs: [], redemptions: [], role: 'user',
-        }]);
-
-        if (profileError) {
+        let profile;
+        try {
+            profile = await profiles.createProfile({ email, name });
+        } catch (profileError) {
             console.error('Profile creation failed, rolling back auth record:', profileError);
-            await userRef.delete().catch(e => console.error('Rollback failed:', e));
+            await rollback();
             return fail(res, 500, 'Could not create your profile. Please try again.');
         }
 
+        if (profile.outcome === 'blocked') {
+            console.warn(`Registration blocked: an old profile for ${email} still holds rewards.`);
+            await rollback();
+            return fail(res, 409, 'This email has an old rewards profile that still holds rewards. Please contact support to restore it.');
+        }
+        if (profile.outcome === 'reused') console.log(`Registration reused the empty leftover profile for ${email}.`);
+
+        authCache.delete(email); // the new login must be visible to session checks immediately
         res.status(201).json({ status: 'ok' });
     } catch (err) {
         console.error('Register error:', err);
@@ -257,13 +306,21 @@ app.post('/api/login', loginLimiterPerIp, loginLimiterPerAccount, async (req, re
         const doc = await db.collection('users').doc(email).get();
         const userData = doc.exists ? doc.data() : null;
 
-        const isValid = await bcrypt.compare(password, userData ? userData.password : DUMMY_HASH);
-        if (!userData || !isValid) return fail(res, 401, 'Invalid email or password');
+        // A record without a stored hash (e.g. edited by hand) is treated as wrong credentials, not a crash.
+        const storedHash = userData && typeof userData.password === 'string' ? userData.password : null;
+        const isValid = await bcrypt.compare(password, storedHash || DUMMY_HASH);
+        if (!storedHash || !isValid) return fail(res, 401, 'Invalid email or password');
 
         const role = userData.role === 'admin' ? 'admin' : 'user';
         const token = jwt.sign({ email: userData.email, role }, JWT_SECRET, {
             algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN, issuer: JWT_ISSUER, audience: AUTH_AUDIENCE,
         });
+
+        // The auth record (Firestore) is the source of truth for roles. Mirror it onto the profile,
+        // which the leaderboard filters on. Best-effort: never blocks or fails the login.
+        supabase.from('user_profiles').update({ role }).eq('email', userData.email).or(`role.is.null,role.neq.${role}`)
+            .then(({ error }) => { if (error) console.error('Role sync failed:', error.message); });
+
         return res.json({ status: 'ok', token, role });
     } catch (err) {
         console.error('Login error:', err);
@@ -390,16 +447,99 @@ app.get('/api/rewards/catalog', (req, res) => {
 // ADMIN: GET ALL USERS — admins only.
 app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
     try {
-        const { data: users, error } = await supabase
-            .from('user_profiles')
-            .select('email, name, role, walletBalance, ecoPoints, logs, redemptions');
+        const [{ data: users, error }, authSnapshot] = await Promise.all([
+            supabase.from('user_profiles').select('email, name, role, walletBalance, ecoPoints, logs, redemptions, createdAt'),
+            db.collection('users').select('role').get(),
+        ]);
         if (error) throw error;
 
-        const usersList = users.map(u => ({ ...u, _id: u.email }));
-        res.json({ status: 'ok', users: usersList });
+        // Roles come from the auth record (source of truth), not the profile copy.
+        const authRoles = new Map(authSnapshot.docs.map(d => [d.id, d.get('role') === 'admin' ? 'admin' : 'user']));
+        const profileEmails = new Set(users.map(u => u.email));
+
+        const usersList = users.map(u => ({
+            ...u,
+            _id: u.email,
+            role: authRoles.get(u.email) || u.role || 'user',
+            hasLogin: authRoles.has(u.email),
+            impact: computeImpact(u.logs),
+        }));
+        const missingProfiles = [...authRoles.keys()].filter(email => !profileEmails.has(email));
+
+        res.json({ status: 'ok', users: usersList, missingProfiles });
     } catch (err) {
         console.error('Admin users error:', err);
         return fail(res, 500, 'Server Error');
+    }
+});
+
+// ADMIN: change a redemption's status (Pending -> Paid/Rejected, Issued -> Claimed/Cancelled).
+// Rejected/Cancelled refund the cost to the user. Applied atomically.
+app.post('/api/admin/redemptions/status', verifyToken, requireAdmin, writeLimiter, async (req, res) => {
+    const email = str(req.body && req.body.email);
+    const code = str(req.body && req.body.code);
+    const status = req.body && req.body.status;
+
+    if (!email || email.length > 254 || !/^NB-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code) || !ADMIN_STATUSES.includes(status)) {
+        return fail(res, 400, 'Invalid request');
+    }
+
+    try {
+        const outcome = await profiles.atomicUpdate(email, user =>
+            planRedemptionStatusChange(user, { code, status, now: Date.now(), adminEmail: req.userEmail }));
+
+        if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found in database');
+        if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.message);
+        if (outcome.outcome === 'conflict') return fail(res, 409, 'This account changed while saving. Please refresh and try again.');
+
+        statsCache = null;
+        res.json({ status: 'ok', redemption: outcome.result });
+    } catch (err) {
+        console.error('Redemption status error:', err);
+        return fail(res, 500, 'Server Error');
+    }
+});
+
+// PUBLIC IMPACT STATS (landing/about pages). Aggregates only; cached briefly.
+const STATS_TTL_MS = 5 * MIN;
+let statsCache = null;
+
+app.get('/api/stats', async (req, res) => {
+    try {
+        if (!statsCache || statsCache.expires <= Date.now()) {
+            const [{ data: users, error }, { data: bins, error: binsError }] = await Promise.all([
+                supabase.from('user_profiles').select('logs, role'),
+                supabase.from('bins').select('status'),
+            ]);
+            if (error) throw error;
+            if (binsError) throw binsError;
+
+            let items = 0, wasteKg = 0, co2Kg = 0, rewardsIssued = 0;
+            for (const u of users) {
+                const impact = computeImpact(u.logs);
+                items += impact.items;
+                wasteKg += impact.wasteKg;
+                co2Kg += impact.co2Kg;
+                for (const log of Array.isArray(u.logs) ? u.logs : []) rewardsIssued += Number(log && log.amount) || 0;
+            }
+            const round = n => Math.round(n * 1000) / 1000;
+            statsCache = {
+                expires: Date.now() + STATS_TTL_MS,
+                value: {
+                    users: users.filter(u => u.role !== 'admin').length,
+                    items,
+                    wasteKg: round(wasteKg),
+                    co2Kg: round(co2Kg),
+                    rewardsIssued,
+                    bins: bins.length,
+                    activeBins: bins.filter(b => b.status === 'Active').length,
+                },
+            };
+        }
+        res.json({ status: 'ok', ...statsCache.value });
+    } catch (err) {
+        console.error('Stats error:', err);
+        return fail(res, 500, 'Could not fetch stats');
     }
 });
 
@@ -422,10 +562,12 @@ app.get('/api/leaderboard', async (req, res) => {
             .from('user_profiles')
             .select('name, ecoPoints')
             .eq('role', 'user')
+            .gt('ecoPoints', 0)
             .order('ecoPoints', { ascending: false })
             .limit(50);
         if (error) throw error;
-        res.json({ status: 'ok', leaderboard: leaders });
+        const leaderboard = leaders.map(l => ({ name: (l.name || '').trim() || 'Eco-warrior', ecoPoints: l.ecoPoints }));
+        res.json({ status: 'ok', leaderboard });
     } catch (err) {
         console.error('Leaderboard error:', err);
         return fail(res, 500, 'Could not fetch leaderboard');
