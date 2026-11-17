@@ -273,11 +273,13 @@ Codes stay valid until `QR_SECRET` changes. Bins in live mode get a "Live QR on 
 
 Change it only if the secret has leaked (committed, shared or shown on screen). For a single lost or tampered bin screen, use **Replace key** on that bin instead; it affects only that bin.
 
-1. Generate a new secret (at least 32 characters):
+1. Generate a new secret (at least 32 characters). Open any terminal (VS Code terminal, PowerShell, Command Prompt or Git Bash); any folder works, it only needs Node.js installed. Run:
 
    ```bash
    node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
    ```
+
+   It prints a 96-character random string. Copy it; that is your new `QR_SECRET`. Nothing is saved anywhere until you paste it in step 2.
 
 2. Put the **same value** in both places:
    - Local: `QR_SECRET=<value>` in `server/.env`, then restart the server.
