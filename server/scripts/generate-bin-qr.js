@@ -5,7 +5,7 @@
 //
 // Print the resulting page and stick each QR on its bin. Codes stay valid until QR_SECRET changes.
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
 
 const fs = require('fs');
 const path = require('path');
@@ -17,7 +17,7 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 
 async function main() {
     const { QR_SECRET, SUPABASE_URL } = process.env;
-    const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!QR_SECRET || QR_SECRET.length < 32) throw new Error('QR_SECRET (min 32 chars) must be set in server/.env');
     if (!SUPABASE_URL || !key) throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY must be set in server/.env');

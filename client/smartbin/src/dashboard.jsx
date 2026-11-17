@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api, { apiErrorMessage, apiStatus, logout } from './api';
+import api, { apiErrorMessage, apiStatus } from './api';
+import { useAuth } from './authContext';
 import RedeemModal from './redeemModal';
 import { formatCo2, formatDateTime } from './format';
 import {
@@ -43,7 +44,8 @@ export default function Dashboard() {
   const [catalogFailed, setCatalogFailed] = useState(false);
   const [redeemEntry, setRedeemEntry] = useState(null);
 
-  const goToLogin = useCallback(() => { logout(); navigate('/login', { replace: true }); }, [navigate]);
+  const { signOut } = useAuth();
+  const goToLogin = useCallback(async () => { await signOut(); navigate('/login', { replace: true }); }, [signOut, navigate]);
 
   // Only an authentication failure logs the user out; network/server errors show a retry screen.
   const fetchUserData = useCallback(() => api.get('/api/dashboard')
@@ -151,7 +153,7 @@ export default function Dashboard() {
             <Trophy size={20} /> <span className="hidden sm:inline">Leaderboard</span>
           </button>
           <button
-            onClick={() => { logout(); navigate('/'); }}
+            onClick={async () => { await signOut(); navigate('/'); }}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition"
           >
             <LogOut size={20} /> <span className="hidden sm:inline">Logout</span>

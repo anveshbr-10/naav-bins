@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, Navigate } from 'react-router-dom';
-import api, { apiErrorMessage, getSession } from './api';
-import { Loader2, ArrowLeft } from 'lucide-react';
+import { Link, Navigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
+import { supabase, AUTH_REDIRECTS, SOCIAL_PROVIDERS, getEnabledProviders, authErrorMessage } from './supabase';
+import { useAuth } from './authContext';
+import { FullPageLoader, ProfileLoadError } from './authPages';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
 const styles = `
@@ -119,7 +121,9 @@ const styles = `
   }
 
   .social-links { display: flex; gap: 12px; margin-bottom: 14px; }
-  .social-links a {
+  .social-links button {
+    background: transparent;
+    cursor: pointer;
     width: 42px; height: 42px;
     border: 2px solid #d4edda;
     border-radius: 50%;
@@ -130,7 +134,8 @@ const styles = `
     transition: all 0.25s;
   }
 
-  .social-links a:hover {
+  .social-links button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .social-links button:hover:not(:disabled) {
     background: #2e7d4f;
     border-color: #2e7d4f;
     color: #fff;
@@ -144,6 +149,22 @@ const styles = `
     align-items: center;
     gap: 10px;
     margin-bottom: 14px;
+  }
+
+  .form-note {
+    width: 100%;
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: left;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 2px 0 10px;
+  }
+  .form-note.error { background: #fef2f2; color: #b91c1c; }
+  .form-note.success { background: #f0fdf4; color: #166534; }
+  .form-note button {
+    background: none; border: none; padding: 0; margin-left: 4px;
+    color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer;
   }
 
   .divider-row span { font-size: 12px; color: #aaa; white-space: nowrap; }
@@ -366,73 +387,146 @@ const LEAVES = [
   { left: '95%', delay: '4.5s', dur: '14s', size: 20, color: '#388e3ccc' },
 ];
 
+// ─── Social login buttons ─────────────────────────────────────────────────────
+function SocialButtons({ disabled, onSelect }) {
+  return (
+    <>
+      <div className="social-links">
+        {SOCIAL_PROVIDERS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            aria-label={`Continue with ${p.label}`}
+            title={`Continue with ${p.label}`}
+            disabled={disabled}
+            onClick={() => onSelect(p)}
+          >
+            <i className={p.icon}></i>
+          </button>
+        ))}
+      </div>
+      <div className="divider-row">
+        <div className="divider-line"></div>
+        <span>or use your email</span>
+        <div className="divider-line"></div>
+      </div>
+    </>
+  );
+}
+
+function Notice({ notice }) {
+  if (!notice) return null;
+  return (
+    <p className={`form-note ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>
+      {notice.text}
+      {notice.action}
+    </p>
+  );
+}
+
 // ─── Shared Auth Component ────────────────────────────────────────────────────
 function Auth({ initialPanel = 'login' }) {
+  const { status, profileStatus, home } = useAuth();
   const [panelActive, setPanelActive] = useState(initialPanel === 'register');
+
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [loginNotice, setLoginNotice] = useState(null);
 
   // Register state
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regLoading, setRegLoading] = useState(false);
-  const navigate = useNavigate();
-  const session = getSession();
+  const [regNotice, setRegNotice] = useState(null);
 
-  // ── Login handler (original logic preserved) ──
+  const [socialBusy, setSocialBusy] = useState(false);
+
+  // Signed in (password, social or email link): go to the right home once the role is known.
+  if (status === 'signedIn') {
+    if (profileStatus === 'error') return <ProfileLoadError />;
+    if (profileStatus === 'ready') return <Navigate to={home} replace />;
+    return <FullPageLoader message="Signing you in… (the server may take up to 30 seconds to wake up)" />;
+  }
+
+  async function resendConfirmation(email) {
+    setLoginNotice({ type: 'success', text: 'Sending…' });
+    const { error } = await supabase.auth.resend({
+      type: 'signup', email, options: { emailRedirectTo: AUTH_REDIRECTS.callback() },
+    });
+    setLoginNotice(error
+      ? { type: 'error', text: authErrorMessage(error) }
+      : { type: 'success', text: `We sent a new confirmation link to ${email}.` });
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
+    setLoginNotice(null);
     setLoginLoading(true);
-    try {
-      const res = await api.post('/api/login', {
-        email: loginEmail,
-        password: loginPassword,
-      });
-      if (res.data.status === 'ok') {
-        localStorage.setItem('token', res.data.token);
-        if (res.data.role === 'admin') navigate('/admin');
-        else navigate('/dashboard');
-      } else {
-        alert('Invalid Credentials. Please try again.');
-        setLoginLoading(false);
-      }
-    } catch (err) {
-      alert(err?.response?.status === 401
-        ? 'Invalid Credentials. Please try again.'
-        : apiErrorMessage(err, 'Login failed. Please try again.'));
-      setLoginLoading(false);
-    }
+    const email = loginEmail.trim();
+    const { error } = await supabase.auth.signInWithPassword({ email, password: loginPassword });
+    setLoginLoading(false);
+    if (!error) return; // the auth state changes and this screen redirects automatically
+
+    const unconfirmed = error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message || '');
+    setLoginNotice({
+      type: 'error',
+      text: authErrorMessage(error),
+      action: unconfirmed
+        ? <button type="button" onClick={() => resendConfirmation(email)}>Resend link</button>
+        : null,
+    });
   }
 
-  // ── Register handler (original logic preserved) ──
   async function handleRegister(e) {
     e.preventDefault();
+    setRegNotice(null);
     setRegLoading(true);
-    try {
-      const res = await api.post('/api/register', {
-        name: regName,
-        email: regEmail,
-        password: regPassword,
-      });
-      if (res.data.status === 'ok') {
-        alert('Registration Successful! Please Login.');
-        setPanelActive(false);
-        setRegLoading(false);
-      } else {
-        alert('Error: ' + (res.data.error || 'Email might already be in use.'));
-        setRegLoading(false);
-      }
-    } catch (err) {
-      alert('Error: ' + apiErrorMessage(err, 'Registration failed. Please try again.'));
-      setRegLoading(false);
+    const email = regEmail.trim();
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: regPassword,
+      options: { data: { name: regName.trim() }, emailRedirectTo: AUTH_REDIRECTS.callback() },
+    });
+    setRegLoading(false);
+    if (error) {
+      setRegNotice({ type: 'error', text: authErrorMessage(error) });
+      return;
     }
+    if (!data.session) {
+      setRegPassword('');
+      setRegNotice({
+        type: 'success',
+        text: `Almost done! We sent a confirmation link to ${email}. Open it to activate your account. Already registered? Just sign in.`,
+      });
+    }
+    // If email confirmation is switched off, a session is returned and this screen redirects automatically.
   }
 
-  // Already signed in: skip the auth screen.
-  if (session) return <Navigate to={session.role === 'admin' ? '/admin' : '/dashboard'} replace />;
+  async function handleSocial(provider, setNotice) {
+    setNotice(null);
+    setSocialBusy(true);
+    try {
+      const enabled = await getEnabledProviders();
+      if (!enabled[provider.id]) {
+        setNotice({ type: 'error', text: `${provider.label} sign-in is not available yet. Please use your email and password.` });
+        setSocialBusy(false);
+        return;
+      }
+    } catch { /* provider settings unavailable: try the redirect anyway */ }
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: provider.id,
+      options: { redirectTo: AUTH_REDIRECTS.callback() },
+    });
+    if (error) {
+      setNotice({ type: 'error', text: authErrorMessage(error) });
+      setSocialBusy(false);
+    }
+    // On success the browser leaves for the provider's sign-in page.
+  }
 
   return (
     <>
@@ -454,10 +548,13 @@ function Auth({ initialPanel = 'login' }) {
             <form onSubmit={handleRegister}>
               <h1>Create Account</h1>
               <p className="form-subtitle">Join the SmartBin revolution today</p>
+              <SocialButtons disabled={regLoading || socialBusy} onSelect={(p) => handleSocial(p, setRegNotice)} />
               <input
                 required type="text"
                 className="auth-input"
                 placeholder="Full Name"
+                maxLength={60}
+                autoComplete="name"
                 value={regName}
                 onChange={(e) => setRegName(e.target.value)}
                 disabled={regLoading}
@@ -466,6 +563,7 @@ function Auth({ initialPanel = 'login' }) {
                 required type="email"
                 className="auth-input"
                 placeholder="Email Address"
+                autoComplete="email"
                 value={regEmail}
                 onChange={(e) => setRegEmail(e.target.value)}
                 disabled={regLoading}
@@ -476,19 +574,17 @@ function Auth({ initialPanel = 'login' }) {
                 placeholder="Password (min 8 characters)"
                 minLength={8}
                 maxLength={72}
+                autoComplete="new-password"
                 value={regPassword}
                 onChange={(e) => setRegPassword(e.target.value)}
                 disabled={regLoading}
               />
-              <button type="submit" className="auth-btn" disabled={regLoading}>
+              <Notice notice={regNotice} />
+              <button type="submit" className="auth-btn" disabled={regLoading || socialBusy}>
                 {regLoading
                   ? <><Loader2 size={16} className="spin" /> Signing Up...</>
                   : 'Sign Up'}
               </button>
-              <p className="wake-note">
-                <i className="fas fa-info-circle"></i>
-                Server may take ~30s to wake up on first try.
-              </p>
               {/* Mobile toggle */}
               <div className="mobile-switch">
                 <p>Already have an account?</p>
@@ -503,10 +599,12 @@ function Auth({ initialPanel = 'login' }) {
             <form onSubmit={handleLogin}>
               <h1>Welcome Back</h1>
               <p className="form-subtitle">Login with your SmartBin Credentials</p>
+              <SocialButtons disabled={loginLoading || socialBusy} onSelect={(p) => handleSocial(p, setLoginNotice)} />
               <input
                 required type="email"
                 className="auth-input"
                 placeholder="Email Address"
+                autoComplete="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
                 disabled={loginLoading}
@@ -515,20 +613,18 @@ function Auth({ initialPanel = 'login' }) {
                 required type="password"
                 className="auth-input"
                 placeholder="Password"
+                autoComplete="current-password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 disabled={loginLoading}
               />
-              <Link to="/about#contact" className="forgot-link">Forgot your password? Contact support</Link>
-              <button type="submit" className="auth-btn" disabled={loginLoading}>
+              <Link to="/forgot-password" className="forgot-link">Forgot your password?</Link>
+              <Notice notice={loginNotice} />
+              <button type="submit" className="auth-btn" disabled={loginLoading || socialBusy}>
                 {loginLoading
                   ? <><Loader2 size={16} className="spin" /> Logging In...</>
                   : 'Sign In'}
               </button>
-              <p className="wake-note">
-                <i className="fas fa-info-circle"></i>
-                Server may take ~30s to wake up on first try.
-              </p>
               {/* Mobile toggle */}
               <div className="mobile-switch">
                 <p>Don't have an account?</p>
@@ -562,6 +658,6 @@ function Auth({ initialPanel = 'login' }) {
     </>
   );
 }
-// ─── Named exports (matches your App.jsx imports) ─────────────────────────────
+// ─── Named exports (matches App.jsx imports) ──────────────────────────────────
 export function Login() { return <Auth initialPanel="login" />; }
 export function Register() { return <Auth initialPanel="register" />; }

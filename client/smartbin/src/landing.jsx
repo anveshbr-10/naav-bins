@@ -1,14 +1,14 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getSession } from './api';
+import { useAuth } from './authContext';
 import useImpactStats from './useImpactStats';
 import { formatCo2, formatCount, formatInr, formatKg } from './format';
 import { Recycle, ArrowRight, Wallet, Leaf, TreePine } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
-  const session = getSession();
-  const home = session?.role === 'admin' ? '/admin' : '/dashboard';
+  const { status, home } = useAuth();
+  const session = status === 'signedIn';
   const { status: statsStatus, stats } = useImpactStats();
   const show = (fn) => (statsStatus === 'ready' ? fn(stats) : statsStatus === 'loading' ? '…' : '—');
   return (

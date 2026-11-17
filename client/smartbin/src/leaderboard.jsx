@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Trophy, Medal, Award, ArrowLeft, Loader2, Crown, RefreshCw, WifiOff } from 'lucide-react';
-import api, { getSession } from './api';
+import api from './api';
+import { useAuth } from './authContext';
 
 // Standard competition ranking: equal points share a rank (1, 2, 2, 4).
 function withRanks(list) {
@@ -37,7 +38,7 @@ export default function Leaderboard() {
     const [leaders, setLeaders] = useState([]);
     const [loadState, setLoadState] = useState('loading'); // loading | ready | error
     const navigate = useNavigate();
-    const session = getSession();
+    const session = useAuth().status === 'signedIn';
 
     const fetchLeaderboard = useCallback(() => api.get('/api/leaderboard')
         .then((res) => {

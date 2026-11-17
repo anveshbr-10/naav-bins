@@ -1,11 +1,9 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const admin = require('firebase-admin');
 const { createClient } = require('@supabase/supabase-js');
 
 const { verifyBinQrPayload } = require('./lib/binQr');
@@ -16,6 +14,9 @@ const {
 } = require('./lib/rewards');
 const { createProfileStore } = require('./lib/profileStore');
 
+// Supabase verifies login tokens with WebCrypto; make sure it is available on every Node version.
+if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
+
 // ==========================================
 // 0. CONFIGURATION (all secrets come from the environment)
 // ==========================================
@@ -25,38 +26,32 @@ function intFromEnv(name, fallback) {
     return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-// --- JWT secret (S1) ---
+// --- Scan-session signing secret (bin scans only; user logins are handled by Supabase Auth) ---
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
     if (JWT_SECRET) console.warn('⚠️  JWT_SECRET is shorter than 32 characters — ignoring it.');
     JWT_SECRET = crypto.randomBytes(48).toString('hex');
-    console.warn('⚠️  JWT_SECRET not set: using a random per-process secret. Users will be logged out on every restart. Set JWT_SECRET in the environment.');
+    console.warn('⚠️  JWT_SECRET not set: using a random per-process secret. In-progress bin scans are lost on restart.');
 }
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const JWT_ISSUER = 'naav-bins';
-const AUTH_AUDIENCE = 'naav-bins-app';
 const SCAN_AUDIENCE = 'naav-bins-scan';
 
-// --- Reward integrity (S4/S5/S6) ---
+// --- Reward integrity ---
 const QR_SECRET = process.env.QR_SECRET && process.env.QR_SECRET.length >= 32 ? process.env.QR_SECRET : null;
 if (!QR_SECRET) console.warn('⚠️  QR_SECRET not set (min 32 chars): bin QR verification is disabled, so scanning will be rejected.');
 const SCAN_SESSION_TTL = process.env.SCAN_SESSION_TTL || '5m';
 const REWARD_COOLDOWN_MS = intFromEnv('REWARD_COOLDOWN_SECONDS', 30) * 1000;
 const DAILY_ITEM_LIMIT = intFromEnv('DAILY_ITEM_LIMIT', 30);
 
-// --- Supabase (S9) ---
+// --- Supabase (database + authentication) ---
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVER_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SUPABASE_KEY = SUPABASE_SERVER_KEY || process.env.SUPABASE_ANON_KEY;
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.error('❌ SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_ANON_KEY) must be set. See server/.env.example');
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    console.error('❌ SUPABASE_URL and SUPABASE_SECRET_KEY must be set. See server/.env.example');
     process.exit(1);
 }
-if (!SUPABASE_SERVER_KEY) {
-    console.warn('⚠️  Using the PUBLIC Supabase key. Set SUPABASE_SECRET_KEY and enable RLS (server/supabase/security.sql) so the database cannot be accessed directly.');
-}
 
-// --- CORS (S12) ---
+// --- CORS ---
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
     .split(',')
     .map(s => s.trim().replace(/\/+$/, ''))
@@ -67,29 +62,11 @@ if (!CORS_ORIGINS.length) console.warn('⚠️  CORS_ORIGINS not set: API accept
 // 1. CONNECTIONS
 // ==========================================
 
-let serviceAccount;
-if (process.env.FIREBASE_CREDS) {
-    try {
-        serviceAccount = JSON.parse(process.env.FIREBASE_CREDS);
-    } catch {
-        console.error('❌ FIREBASE_CREDS is not valid JSON.');
-        process.exit(1);
-    }
-    console.log('☁️  Running in Cloud Mode');
-} else {
-    serviceAccount = require('./serviceAccountKey.json');
-    console.log('💻 Running in Local Mode');
-}
-
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-const db = admin.firestore();
-console.log('🔥 Firebase Auth Connected');
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
+const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 const profiles = createProfileStore(supabase);
-console.log('⚡ Supabase Database Connected');
+console.log('⚡ Supabase connected (database + authentication)');
 
 // ==========================================
 // 2. APP + MIDDLEWARE
@@ -97,7 +74,7 @@ console.log('⚡ Supabase Database Connected');
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1); // Render sits behind one proxy; needed for correct client IPs in rate limiting
+app.set('trust proxy', 1); // Render sits behind one proxy; needed for correct client IPs
 
 app.use((req, res, next) => {
     res.set({
@@ -111,12 +88,12 @@ app.use((req, res, next) => {
 
 app.use(cors({
     origin(origin, callback) {
-        // Requests without an Origin header (curl, server-to-server, same-origin) carry no browser credentials.
+        // Requests without an Origin header (curl, server-to-server) carry no browser credentials.
         if (!origin || !CORS_ORIGINS.length || CORS_ORIGINS.includes(origin)) return callback(null, true);
         return callback(null, false);
     },
     methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'x-access-token'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     maxAge: 600,
 }));
 
@@ -124,13 +101,12 @@ app.use(express.json({ limit: '10kb' }));
 
 // --- Helpers ---
 function fail(res, code, message) {
-    // `error` and `message` are both kept for compatibility with existing clients.
     return res.status(code).json({ status: 'error', error: message, message });
 }
 
-const EMAIL_RE = /^[^\s@/]{1,64}@[^\s@/]{1,190}\.[^\s@/]{2,63}$/;
 const str = v => (typeof v === 'string' ? v.trim() : '');
 const hasKey = (table, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function rateLimit({ windowMs, max, keyFn, message }) {
     const hits = new Map();
@@ -157,190 +133,71 @@ function rateLimit({ windowMs, max, keyFn, message }) {
 }
 
 const MIN = 60 * 1000;
-const loginLimiterPerAccount = rateLimit({
-    windowMs: 15 * MIN, max: 10,
-    keyFn: req => `login:${req.ip}:${str(req.body && req.body.email).toLowerCase()}`,
-    message: 'Too many login attempts. Please wait 15 minutes and try again.',
-});
-const loginLimiterPerIp = rateLimit({ windowMs: 15 * MIN, max: 100, keyFn: req => `login-ip:${req.ip}` });
-const registerLimiter = rateLimit({
-    windowMs: 60 * MIN, max: 30, keyFn: req => `register:${req.ip}`,
-    message: 'Too many sign-ups from this network. Please try again later.',
-});
-const scanLimiter = rateLimit({ windowMs: MIN, max: 20, keyFn: req => `scan:${req.userEmail}` });
-const writeLimiter = rateLimit({ windowMs: MIN, max: 30, keyFn: req => `write:${req.userEmail}` });
+const scanLimiter = rateLimit({ windowMs: MIN, max: 20, keyFn: req => `scan:${req.user.id}` });
+const writeLimiter = rateLimit({ windowMs: MIN, max: 30, keyFn: req => `write:${req.user.id}` });
 
-// Login records are re-checked (cached briefly) so a session ends when its account is deleted, and a
-// token issued to an earlier account with the same email cannot be used on a newly registered one.
-const AUTH_CACHE_MS = 60 * 1000;
-const authCache = new Map(); // email -> { expires, exists, createdSec }
-
-async function getAuthRecord(email) {
-    const now = Date.now();
-    const hit = authCache.get(email);
-    if (hit && hit.expires > now) return hit;
-
-    const doc = await db.collection('users').doc(email).get();
-    const entry = {
-        expires: now + AUTH_CACHE_MS,
-        exists: doc.exists,
-        createdSec: doc.exists && doc.createTime ? doc.createTime.seconds : 0,
-    };
-    if (authCache.size > 5000) {
-        for (const [key, value] of authCache) if (value.expires <= now) authCache.delete(key);
-    }
-    authCache.set(email, entry);
-    return entry;
-}
+// ==========================================
+// 3. AUTHENTICATION (SUPABASE AUTH)
+// ==========================================
+// Sign-up, login, social login, email verification and password reset all happen between the
+// browser and Supabase Auth. The API only verifies the Supabase access token on each request
+// (signature checked against the project's published signing keys, plus expiry).
 
 async function verifyToken(req, res, next) {
-    const token = req.headers['x-access-token'];
-    if (!token || typeof token !== 'string') return fail(res, 401, 'No token provided');
-
-    let decoded;
-    try {
-        decoded = jwt.verify(token, JWT_SECRET, {
-            algorithms: ['HS256'], issuer: JWT_ISSUER, audience: AUTH_AUDIENCE,
-        });
-        if (typeof decoded.email !== 'string') throw new Error('bad payload');
-    } catch {
-        return fail(res, 401, 'Invalid or expired token');
-    }
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (!token) return fail(res, 401, 'Please sign in.');
 
     try {
-        const record = await getAuthRecord(decoded.email);
-        if (!record.exists || (typeof decoded.iat === 'number' && decoded.iat < record.createdSec)) {
-            return fail(res, 401, 'Your session has ended. Please log in again.');
+        const { data, error } = await supabase.auth.getClaims(token);
+        const claims = data && data.claims;
+        if (error || !claims || claims.role !== 'authenticated' || typeof claims.sub !== 'string') {
+            return fail(res, 401, 'Your session has expired. Please sign in again.');
         }
-    } catch (err) {
-        console.error('Auth record check failed:', err);
-        return fail(res, 503, 'Sign-in service is temporarily unavailable. Please try again.');
+        const meta = claims.user_metadata || {};
+        req.user = {
+            id: claims.sub,
+            email: typeof claims.email === 'string' ? claims.email : '',
+            name: str(meta.name) || str(meta.full_name),
+        };
+        next();
+    } catch {
+        return fail(res, 401, 'Your session has expired. Please sign in again.');
     }
+}
 
-    req.userEmail = decoded.email;
+// Loads the caller's profile (creating it if the sign-up trigger has not). Ends the session if the
+// account was deleted.
+async function loadProfile(req, res, next) {
+    try {
+        const profile = await profiles.ensureProfile(req.user);
+        if (!profile) return fail(res, 401, 'This account no longer exists. Please sign in again.');
+        req.profile = profile;
+        next();
+    } catch (err) {
+        console.error('Profile load error:', err);
+        return fail(res, 500, 'Server Error');
+    }
+}
+
+// The role lives only in user_profiles.role and is read fresh on every admin request.
+function requireAdmin(req, res, next) {
+    if (!req.profile || req.profile.role !== 'admin') return fail(res, 403, 'Admin access required');
     next();
 }
 
-// Role is re-checked against the auth database on every request, so demoting an admin takes effect immediately.
-async function requireAdmin(req, res, next) {
-    try {
-        const doc = await db.collection('users').doc(req.userEmail).get();
-        if (!doc.exists || doc.data().role !== 'admin') return fail(res, 403, 'Admin access required');
-        next();
-    } catch (err) {
-        console.error('Admin check failed:', err);
-        return fail(res, 500, 'Server Error');
-    }
-}
-
-// Used to keep login timing identical whether or not the account exists.
-const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
-
 // ==========================================
-// 3. AUTHENTICATION (FIREBASE PRIMARY)
+// 4. ACCOUNT + SYSTEM DATA
 // ==========================================
 
-app.post('/api/register', registerLimiter, async (req, res) => {
-    const name = str(req.body && req.body.name);
-    const email = str(req.body && req.body.email);
-    const password = req.body && req.body.password;
-
-    if (name.length < 1 || name.length > 60) return fail(res, 400, 'Please enter your name (max 60 characters).');
-    if (email.length > 254 || !EMAIL_RE.test(email)) return fail(res, 400, 'Please enter a valid email address.');
-    if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
-        return fail(res, 400, 'Password must be between 8 and 72 characters.');
-    }
-
-    const userRef = db.collection('users').doc(email);
-    const rollback = async () => {
-        await userRef.delete().catch(e => console.error('Rollback failed:', e));
-        authCache.delete(email);
-    };
-
-    try {
-        const passwordHash = await bcrypt.hash(password, 10);
-
-        // create() fails atomically if the document already exists (no check-then-write race).
-        try {
-            await userRef.create({ email, password: passwordHash, role: 'user' });
-        } catch (err) {
-            if (err && (err.code === 6 || /already exists/i.test(err.message || ''))) {
-                return fail(res, 409, 'Email already exists');
-            }
-            throw err;
-        }
-
-        let profile;
-        try {
-            profile = await profiles.createProfile({ email, name });
-        } catch (profileError) {
-            console.error('Profile creation failed, rolling back auth record:', profileError);
-            await rollback();
-            return fail(res, 500, 'Could not create your profile. Please try again.');
-        }
-
-        if (profile.outcome === 'blocked') {
-            console.warn(`Registration blocked: an old profile for ${email} still holds rewards.`);
-            await rollback();
-            return fail(res, 409, 'This email has an old rewards profile that still holds rewards. Please contact support to restore it.');
-        }
-        if (profile.outcome === 'reused') console.log(`Registration reused the empty leftover profile for ${email}.`);
-
-        authCache.delete(email); // the new login must be visible to session checks immediately
-        res.status(201).json({ status: 'ok' });
-    } catch (err) {
-        console.error('Register error:', err);
-        return fail(res, 500, 'Server Error');
-    }
+// Who am I? Used by the app after sign-in to decide between the user dashboard and the admin portal.
+app.get('/api/me', verifyToken, loadProfile, (req, res) => {
+    const { id, email, name, role } = req.profile;
+    res.json({ status: 'ok', profile: { id, email, name, role } });
 });
 
-app.post('/api/login', loginLimiterPerIp, loginLimiterPerAccount, async (req, res) => {
-    const email = str(req.body && req.body.email);
-    const password = req.body && req.body.password;
-
-    if (!email || email.length > 254 || email.includes('/') || typeof password !== 'string' || password.length > 128) {
-        return fail(res, 401, 'Invalid email or password');
-    }
-
-    try {
-        const doc = await db.collection('users').doc(email).get();
-        const userData = doc.exists ? doc.data() : null;
-
-        // A record without a stored hash (e.g. edited by hand) is treated as wrong credentials, not a crash.
-        const storedHash = userData && typeof userData.password === 'string' ? userData.password : null;
-        const isValid = await bcrypt.compare(password, storedHash || DUMMY_HASH);
-        if (!storedHash || !isValid) return fail(res, 401, 'Invalid email or password');
-
-        const role = userData.role === 'admin' ? 'admin' : 'user';
-        const token = jwt.sign({ email: userData.email, role }, JWT_SECRET, {
-            algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN, issuer: JWT_ISSUER, audience: AUTH_AUDIENCE,
-        });
-
-        // The auth record (Firestore) is the source of truth for roles. Mirror it onto the profile,
-        // which the leaderboard filters on. Best-effort: never blocks or fails the login.
-        supabase.from('user_profiles').update({ role }).eq('email', userData.email).or(`role.is.null,role.neq.${role}`)
-            .then(({ error }) => { if (error) console.error('Role sync failed:', error.message); });
-
-        return res.json({ status: 'ok', token, role });
-    } catch (err) {
-        console.error('Login error:', err);
-        return fail(res, 500, 'Server Error');
-    }
-});
-
-// ==========================================
-// 4. SYSTEM DATA (SUPABASE PRIMARY)
-// ==========================================
-
-app.get('/api/dashboard', verifyToken, async (req, res) => {
-    try {
-        const user = await profiles.getProfile(req.userEmail);
-        if (!user) return fail(res, 404, 'User not found in database');
-        res.json({ status: 'ok', user, impact: computeImpact(user.logs) });
-    } catch (err) {
-        console.error('Dashboard error:', err);
-        return fail(res, 500, 'Server Error');
-    }
+app.get('/api/dashboard', verifyToken, loadProfile, (req, res) => {
+    res.json({ status: 'ok', user: req.profile, impact: computeImpact(req.profile.logs) });
 });
 
 // START A SCAN SESSION: verifies the signed bin QR and returns a short-lived, single-use scan token.
@@ -361,7 +218,7 @@ app.post('/api/scan/start', verifyToken, scanLimiter, async (req, res) => {
         if (bin.status !== 'Active') return fail(res, 409, `${bin.name} is currently ${bin.status}. Please use an active bin.`);
 
         const scanToken = jwt.sign(
-            { email: req.userEmail, binId: String(bin.id), binName: bin.name },
+            { sub: req.user.id, binId: String(bin.id), binName: bin.name },
             JWT_SECRET,
             {
                 algorithm: 'HS256', expiresIn: SCAN_SESSION_TTL, issuer: JWT_ISSUER,
@@ -389,13 +246,13 @@ app.post('/api/add-waste', verifyToken, writeLimiter, async (req, res) => {
     } catch {
         return fail(res, 403, 'Bin scan expired or missing. Please scan the bin QR code again.');
     }
-    if (session.email !== req.userEmail || !session.jti) {
+    if (session.sub !== req.user.id || !session.jti) {
         return fail(res, 403, 'This bin scan belongs to a different account.');
     }
     if (!hasKey(REWARD_MAP, wasteType)) return fail(res, 400, 'Unknown waste type');
 
     try {
-        const outcome = await profiles.atomicUpdate(req.userEmail, user => planWasteDeposit(user, {
+        const outcome = await profiles.atomicUpdate(req.user.id, user => planWasteDeposit(user, {
             wasteType,
             binName: session.binName,
             sessionId: session.jti,
@@ -404,7 +261,7 @@ app.post('/api/add-waste', verifyToken, writeLimiter, async (req, res) => {
             dailyLimit: DAILY_ITEM_LIMIT,
         }));
 
-        if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found in database');
+        if (outcome.outcome === 'not_found') return fail(res, 404, 'Profile not found');
         if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.message);
         if (outcome.outcome === 'conflict') return fail(res, 409, 'Your account is busy. Please try again.');
 
@@ -425,10 +282,10 @@ app.post('/api/redeem', verifyToken, writeLimiter, async (req, res) => {
     }
     try {
         const code = generateVoucherCode();
-        const outcome = await profiles.atomicUpdate(req.userEmail, user =>
+        const outcome = await profiles.atomicUpdate(req.user.id, user =>
             planRedemption(user, { item, upiId, code, now: Date.now() }));
 
-        if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found in database');
+        if (outcome.outcome === 'not_found') return fail(res, 404, 'Profile not found');
         if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.message);
         if (outcome.outcome === 'conflict') return fail(res, 409, 'Your account is busy. Please try again.');
 
@@ -445,28 +302,16 @@ app.get('/api/rewards/catalog', (req, res) => {
 });
 
 // ADMIN: GET ALL USERS — admins only.
-app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
+app.get('/api/admin/users', verifyToken, loadProfile, requireAdmin, async (req, res) => {
     try {
-        const [{ data: users, error }, authSnapshot] = await Promise.all([
-            supabase.from('user_profiles').select('email, name, role, walletBalance, ecoPoints, logs, redemptions, createdAt'),
-            db.collection('users').select('role').get(),
-        ]);
+        const { data: users, error } = await supabase
+            .from('user_profiles')
+            .select('id, email, name, role, walletBalance, ecoPoints, logs, redemptions, createdAt')
+            .order('createdAt', { ascending: true });
         if (error) throw error;
 
-        // Roles come from the auth record (source of truth), not the profile copy.
-        const authRoles = new Map(authSnapshot.docs.map(d => [d.id, d.get('role') === 'admin' ? 'admin' : 'user']));
-        const profileEmails = new Set(users.map(u => u.email));
-
-        const usersList = users.map(u => ({
-            ...u,
-            _id: u.email,
-            role: authRoles.get(u.email) || u.role || 'user',
-            hasLogin: authRoles.has(u.email),
-            impact: computeImpact(u.logs),
-        }));
-        const missingProfiles = [...authRoles.keys()].filter(email => !profileEmails.has(email));
-
-        res.json({ status: 'ok', users: usersList, missingProfiles });
+        const usersList = users.map(u => ({ ...u, _id: u.id, impact: computeImpact(u.logs) }));
+        res.json({ status: 'ok', users: usersList });
     } catch (err) {
         console.error('Admin users error:', err);
         return fail(res, 500, 'Server Error');
@@ -475,20 +320,20 @@ app.get('/api/admin/users', verifyToken, requireAdmin, async (req, res) => {
 
 // ADMIN: change a redemption's status (Pending -> Paid/Rejected, Issued -> Claimed/Cancelled).
 // Rejected/Cancelled refund the cost to the user. Applied atomically.
-app.post('/api/admin/redemptions/status', verifyToken, requireAdmin, writeLimiter, async (req, res) => {
-    const email = str(req.body && req.body.email);
+app.post('/api/admin/redemptions/status', verifyToken, loadProfile, requireAdmin, writeLimiter, async (req, res) => {
+    const userId = str(req.body && req.body.userId);
     const code = str(req.body && req.body.code);
     const status = req.body && req.body.status;
 
-    if (!email || email.length > 254 || !/^NB-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code) || !ADMIN_STATUSES.includes(status)) {
+    if (!UUID_RE.test(userId) || !/^NB-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code) || !ADMIN_STATUSES.includes(status)) {
         return fail(res, 400, 'Invalid request');
     }
 
     try {
-        const outcome = await profiles.atomicUpdate(email, user =>
-            planRedemptionStatusChange(user, { code, status, now: Date.now(), adminEmail: req.userEmail }));
+        const outcome = await profiles.atomicUpdate(userId, user =>
+            planRedemptionStatusChange(user, { code, status, now: Date.now(), adminEmail: req.user.email }));
 
-        if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found in database');
+        if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found');
         if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.message);
         if (outcome.outcome === 'conflict') return fail(res, 409, 'This account changed while saving. Please refresh and try again.');
 
@@ -589,4 +434,4 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Server running on ${PORT} (Hybrid Auth/DB Mode)`));
+app.listen(PORT, () => console.log(`✅ Naav Bins API running on port ${PORT}`));

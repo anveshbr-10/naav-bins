@@ -3,7 +3,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, LocateFixed, Navigation, RefreshCw, ChevronDown, ChevronUp, MapPinOff, WifiOff } from 'lucide-react';
-import api, { getSession } from './api';
+import api from './api';
+import { useAuth } from './authContext';
 
 // Only used until bins load; afterwards the map fits to wherever the bins actually are.
 const FALLBACK_CENTER = [12.9637, 77.5058];
@@ -45,7 +46,7 @@ function el(tag, css, text) {
 
 export default function SmartBinMap() {
     const navigate = useNavigate();
-    const session = getSession();
+    const session = useAuth().status === 'signedIn';
 
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);

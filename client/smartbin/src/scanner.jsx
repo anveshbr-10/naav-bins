@@ -4,6 +4,7 @@ import * as tmImage from '@teachablemachine/image';
 import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
 import api, { apiErrorMessage, apiStatus } from './api';
+import { useAuth } from './authContext';
 import { Loader2, ScanQrCode, Camera, CheckCircle2, Flashlight, FlashlightOff, RefreshCw } from 'lucide-react';
 
 // UI metadata per model class. Reward amounts are NOT here — the server decides and returns them.
@@ -71,6 +72,7 @@ export default function Scanner() {
 
   const webcamRef = useRef(null);
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const torchControlRef = useRef(null);   // async (on: boolean) => void, for whichever camera is active
   const torchOnRef = useRef(false);
   const torchManualRef = useRef(false);   // once the user toggles the flash, auto mode stops
@@ -120,7 +122,7 @@ export default function Scanner() {
         setNeedsRescan(false);
         setStep(2);
       } catch (err) {
-        if (apiStatus(err) === 401) { navigate('/login'); return; }
+        if (apiStatus(err) === 401) { signOut().then(() => navigate('/login')); return; }
         setQrError(apiErrorMessage(err, "Could not verify this bin. Please try again."));
       }
     };
@@ -164,7 +166,7 @@ export default function Scanner() {
       setTorch({ supported: false, on: false });
       cameraChainRef.current = run.then(stopScanner);
     };
-  }, [step, scanAttempt, navigate]);
+  }, [step, scanAttempt, navigate, signOut]);
 
   // --- STEP 2: preload the AI model as soon as the item camera opens ---
   useEffect(() => {
@@ -276,7 +278,7 @@ export default function Scanner() {
       redirectTimerRef.current = setTimeout(() => navigate('/dashboard'), 3000);
     } catch (err) {
       const code = apiStatus(err);
-      if (code === 401) { navigate('/login'); return; }
+      if (code === 401) { signOut().then(() => navigate('/login')); return; }
       if (code === 403 || code === 409) setNeedsRescan(true); // scan session used/expired
       failCapture(apiErrorMessage(err, "Could not record this item. Please try again."));
     }

@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, Search, Wallet, Leaf, ArrowUpRight, Download, LogOut, ShieldCheck, Loader2, RefreshCw,
-    X, Landmark, Ticket, AlertTriangle, Recycle, WifiOff,
+    X, Landmark, Ticket, Recycle, WifiOff,
 } from 'lucide-react';
-import api, { apiErrorMessage, apiStatus, logout } from './api';
+import api, { apiErrorMessage, apiStatus } from './api';
+import { useAuth } from './authContext';
 import { formatCo2, formatCount, formatDate, formatDateTime, formatInr } from './format';
 
 const STATUS_BADGE = {
@@ -48,10 +49,10 @@ function StatusBadge({ status }) {
 }
 
 // Two-step button group: pick an action, then confirm it inline.
-function RedemptionActions({ email, redemption, busyKey, confirming, onAsk, onConfirm, onCancel }) {
+function RedemptionActions({ userId, redemption, busyKey, confirming, onAsk, onConfirm, onCancel }) {
     const actions = actionsFor(redemption);
     if (!actions.length) return null;
-    const key = `${email}|${redemption.code}`;
+    const key = `${userId}|${redemption.code}`;
     const busy = busyKey === key;
 
     if (confirming && confirming.key === key) {
@@ -78,7 +79,7 @@ function RedemptionActions({ email, redemption, busyKey, confirming, onAsk, onCo
             {actions.map(a => (
                 <button
                     key={a.status}
-                    onClick={() => onAsk({ key, email, code: redemption.code, status: a.status })}
+                    onClick={() => onAsk({ key, userId, code: redemption.code, status: a.status })}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${a.tone === 'danger'
                         ? 'border-red-200 text-red-600 hover:bg-red-50'
                         : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'}`}
@@ -92,26 +93,25 @@ function RedemptionActions({ email, redemption, busyKey, confirming, onAsk, onCo
 
 export default function Admin() {
     const navigate = useNavigate();
+    const { signOut } = useAuth();
     const [users, setUsers] = useState([]);
-    const [missingProfiles, setMissingProfiles] = useState([]);
     const [loadState, setLoadState] = useState('loading'); // loading | ready | error
     const [searchTerm, setSearchTerm] = useState('');
-    const [selectedEmail, setSelectedEmail] = useState(null);
+    const [selectedId, setSelectedId] = useState(null);
     const [confirming, setConfirming] = useState(null);
     const [busyKey, setBusyKey] = useState(null);
     const [actionError, setActionError] = useState(null);
 
     const handleAuthError = useCallback((err) => {
         const status = apiStatus(err);
-        if (status === 401) { logout(); navigate('/login', { replace: true }); return true; }
+        if (status === 401) { signOut().then(() => navigate('/login', { replace: true })); return true; }
         if (status === 403) { navigate('/dashboard', { replace: true }); return true; }
         return false;
-    }, [navigate]);
+    }, [navigate, signOut]);
 
     const fetchUsers = useCallback(() => api.get('/api/admin/users')
         .then((res) => {
             setUsers(Array.isArray(res.data.users) ? res.data.users : []);
-            setMissingProfiles(Array.isArray(res.data.missingProfiles) ? res.data.missingProfiles : []);
             setLoadState('ready');
         })
         .catch((err) => { if (!handleAuthError(err)) setLoadState('error'); }), [handleAuthError]);
@@ -126,7 +126,7 @@ export default function Admin() {
         setActionError(null);
         try {
             await api.post('/api/admin/redemptions/status', {
-                email: confirming.email, code: confirming.code, status: confirming.status,
+                userId: confirming.userId, code: confirming.code, status: confirming.status,
             });
             setConfirming(null);
             await fetchUsers();
@@ -164,8 +164,7 @@ export default function Admin() {
     const filteredUsers = users.filter(u =>
         String(u.name || '').toLowerCase().includes(term) || String(u.email || '').toLowerCase().includes(term));
 
-    const selectedUser = users.find(u => u.email === selectedEmail) || null;
-    const orphanProfiles = users.filter(u => u.hasLogin === false);
+    const selectedUser = users.find(u => u.id === selectedId) || null;
 
     const exportCsv = () => {
         const header = ['Name', 'Email', 'Role', 'Joined', 'Wallet (INR)', 'Eco Points', 'Items Recycled', 'Est. CO2 (kg)', 'Rewards Earned (INR)', 'Pending Withdrawals (INR)'];
@@ -213,7 +212,7 @@ export default function Admin() {
                         <RefreshCw size={18} />
                     </button>
                     <button
-                        onClick={() => { logout(); navigate('/'); }}
+                        onClick={async () => { await signOut(); navigate('/'); }}
                         className="flex items-center gap-2 text-slate-500 hover:text-red-600 transition font-medium"
                     >
                         <LogOut size={18} /> Logout
@@ -241,31 +240,6 @@ export default function Admin() {
 
             {loadState === 'ready' && (
                 <div className="p-4 md:p-8 max-w-7xl mx-auto">
-
-                    {missingProfiles.length > 0 && (
-                        <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 flex gap-3">
-                            <AlertTriangle className="flex-shrink-0 mt-0.5" size={20} />
-                            <div className="text-sm">
-                                <p className="font-bold">{missingProfiles.length} login account{missingProfiles.length === 1 ? '' : 's'} without a rewards profile</p>
-                                <p className="mt-1">These people can sign in but their dashboard cannot load: {missingProfiles.join(', ')}.
-                                    Delete them in Firestore (users collection) so they can register again.</p>
-                            </div>
-                        </div>
-                    )}
-
-                    {orphanProfiles.length > 0 && (
-                        <div className="mb-6 bg-slate-100 border border-slate-200 text-slate-700 rounded-2xl p-4 flex gap-3">
-                            <AlertTriangle className="flex-shrink-0 mt-0.5" size={20} />
-                            <div className="text-sm">
-                                <p className="font-bold">{orphanProfiles.length} rewards profile{orphanProfiles.length === 1 ? '' : 's'} without a login</p>
-                                <p className="mt-1">
-                                    {orphanProfiles.map(u => u.email).join(', ')}. Their login was deleted. If the person registers
-                                    again with the same email, an empty profile is reused automatically. A profile that still holds
-                                    rewards blocks that email from registering until you delete its row in Supabase (user_profiles).
-                                </p>
-                            </div>
-                        </div>
-                    )}
 
                     {/* STATS OVERVIEW CARDS */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
@@ -318,7 +292,7 @@ export default function Admin() {
                         ) : (
                             <ul className="divide-y divide-slate-100">
                                 {queue.map(({ user: u, redemption: r }) => (
-                                    <li key={`${u.email}|${r.code}`} className="p-4 md:px-6 flex flex-col md:flex-row md:items-center gap-3 justify-between">
+                                    <li key={`${u.id}|${r.code}`} className="p-4 md:px-6 flex flex-col md:flex-row md:items-center gap-3 justify-between">
                                         <div className="flex items-start gap-3 min-w-0">
                                             <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${r.type === 'money' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-600'}`}>
                                                 {r.type === 'money' ? <Landmark size={18} /> : <Ticket size={18} />}
@@ -332,7 +306,7 @@ export default function Admin() {
                                                 </p>
                                             </div>
                                         </div>
-                                        <RedemptionActions email={u.email} redemption={r} {...actionProps} />
+                                        <RedemptionActions userId={u.id} redemption={r} {...actionProps} />
                                     </li>
                                 ))}
                             </ul>
@@ -374,7 +348,7 @@ export default function Admin() {
                                 <tbody className="divide-y divide-slate-100">
                                     {filteredUsers.length > 0 ? (
                                         filteredUsers.map((u) => (
-                                            <tr key={u._id || u.email} className="hover:bg-indigo-50/30 transition duration-150">
+                                            <tr key={u.id} className="hover:bg-indigo-50/30 transition duration-150">
                                                 <td className="p-5">
                                                     <div className="flex items-center gap-3">
                                                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
@@ -403,7 +377,7 @@ export default function Admin() {
                                                 <td className="p-5 text-slate-500 text-sm">{formatDate(u.createdAt)}</td>
                                                 <td className="p-5 text-right">
                                                     <button
-                                                        onClick={() => { setConfirming(null); setActionError(null); setSelectedEmail(u.email); }}
+                                                        onClick={() => { setConfirming(null); setActionError(null); setSelectedId(u.id); }}
                                                         aria-label={`View ${u.email}`}
                                                         className="text-slate-400 hover:text-indigo-600 transition"
                                                     >
@@ -439,7 +413,7 @@ export default function Admin() {
 
             {/* USER DETAIL DRAWER */}
             {selectedUser && (
-                <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={() => setSelectedEmail(null)}>
+                <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={() => setSelectedId(null)}>
                     <aside
                         role="dialog"
                         aria-modal="true"
@@ -453,10 +427,9 @@ export default function Admin() {
                                 <p className="text-sm text-slate-500 truncate">{selectedUser.email}</p>
                                 <p className="text-xs text-slate-400 mt-1">
                                     {String(selectedUser.role || 'user').toUpperCase()} · Joined {formatDate(selectedUser.createdAt)}
-                                    {!selectedUser.hasLogin && ' · No login account'}
                                 </p>
                             </div>
-                            <button onClick={() => setSelectedEmail(null)} aria-label="Close" className="text-slate-400 hover:text-slate-700">
+                            <button onClick={() => setSelectedId(null)} aria-label="Close" className="text-slate-400 hover:text-slate-700">
                                 <X size={22} />
                             </button>
                         </div>
@@ -496,7 +469,7 @@ export default function Admin() {
                                                 <StatusBadge status={r.status} />
                                             </div>
                                             <div className="mt-2">
-                                                <RedemptionActions email={selectedUser.email} redemption={r} {...actionProps} />
+                                                <RedemptionActions userId={selectedUser.id} redemption={r} {...actionProps} />
                                             </div>
                                         </li>
                                     ))}
