@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://smartbin-api-c7g4.onrender.com').replace(/\/+$/, '');
+export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://naav-bins.onrender.com').replace(/\/+$/, '');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
