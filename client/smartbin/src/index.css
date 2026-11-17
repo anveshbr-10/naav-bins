@@ -1,3 +1,170 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ==========================================================================
+   Naav Bins design tokens
+   ========================================================================== */
+:root {
+  --page: #f8faf9;
+  --surface: #ffffff;
+  --surface-2: #f1f5f3;
+  --surface-3: #e5ebe8;
+  --border: #e8eeeb;
+  --border-strong: #d3ddd8;
+  --text: #111a16;
+  --text-2: #374641;
+  --text-3: #55655f;
+  --text-muted: #66756f;
+  --focus: #16a34a;
+  color-scheme: light;
+}
+
+html.dark {
+  --page: #0c1311;
+  --surface: #141d1a;
+  --surface-2: #1b2622;
+  --surface-3: #24312c;
+  --border: #22302b;
+  --border-strong: #31423b;
+  --text: #e9f0ed;
+  --text-2: #cfdad5;
+  --text-3: #b0beb8;
+  --text-muted: #93a39d;
+  --focus: #4ade80;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: var(--page);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* One visible focus style for keyboard users across the whole app. */
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -100px;
+  z-index: 100;
+  background: #15803d;
+  color: #fff;
+  padding: .6rem 1rem;
+  border-radius: .75rem;
+  font-weight: 700;
+}
+.skip-link:focus { top: 1rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   Dark theme
+   Pages are written with light-theme Tailwind utilities. In dark mode the
+   light surfaces, greys, pastel tints and dark text are remapped here, so
+   every page follows the theme without duplicating classes. Dark-native
+   areas (scanner, coloured hero bands, buttons) keep their own colours.
+   ========================================================================== */
+
+/* Surfaces */
+html.dark .bg-white,
+html.dark .focus\:bg-white:focus { background-color: var(--surface); }
+html.dark .bg-white\/90 { background-color: rgb(20 29 26 / .9); }
+html.dark .bg-white\/95 { background-color: rgb(20 29 26 / .95); }
+html.dark .bg-gray-50,
+html.dark .bg-slate-50 { background-color: var(--page); }
+html.dark .bg-gray-100,
+html.dark .bg-slate-100 { background-color: var(--surface-2); }
+html.dark .bg-gray-200,
+html.dark .bg-slate-200 { background-color: var(--surface-3); }
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-slate-50:hover { background-color: var(--surface-2); }
+html.dark .hover\:bg-gray-100:hover,
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-gray-200:hover,
+html.dark .hover\:bg-slate-200:hover { background-color: var(--surface-3); }
+html.dark .ring-white { --tw-ring-color: var(--page); }
+
+/* Text */
+html.dark .text-gray-900, html.dark .text-slate-900,
+html.dark .text-gray-800, html.dark .text-slate-800 { color: var(--text); }
+html.dark .text-gray-700, html.dark .text-slate-700,
+html.dark .hover\:text-gray-700:hover, html.dark .hover\:text-slate-700:hover { color: var(--text-2); }
+html.dark .text-gray-600, html.dark .text-slate-600 { color: var(--text-3); }
+html.dark .text-gray-500, html.dark .text-slate-500,
+html.dark .text-gray-400, html.dark .text-slate-400 { color: var(--text-muted); }
+
+/* Borders */
+html.dark .border-gray-100, html.dark .border-slate-100, html.dark .border-slate-50,
+html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border); }
+html.dark .border-gray-200, html.dark .border-slate-200,
+html.dark .border-gray-300, html.dark .border-slate-300 { border-color: var(--border-strong); }
+
+/* Pastel tints become translucent washes of the same hue */
+html.dark .bg-green-50, html.dark .bg-green-100, html.dark .hover\:bg-green-50:hover { background-color: rgb(34 197 94 / .13); }
+html.dark .hover\:bg-green-100:hover,
+html.dark .hover\:bg-green-200:hover { background-color: rgb(34 197 94 / .22); }
+html.dark .bg-emerald-50, html.dark .bg-emerald-100 { background-color: rgb(16 185 129 / .13); }
+html.dark .bg-blue-50, html.dark .bg-blue-100 { background-color: rgb(59 130 246 / .15); }
+html.dark .bg-indigo-50, html.dark .bg-indigo-100, html.dark .hover\:bg-indigo-50:hover { background-color: rgb(99 102 241 / .16); }
+html.dark .hover\:bg-indigo-50\/30:hover { background-color: rgb(99 102 241 / .08); }
+html.dark .bg-purple-100 { background-color: rgb(168 85 247 / .16); }
+html.dark .bg-red-50, html.dark .bg-red-100, html.dark .hover\:bg-red-50:hover { background-color: rgb(239 68 68 / .14); }
+html.dark .hover\:bg-red-100:hover { background-color: rgb(239 68 68 / .22); }
+html.dark .bg-yellow-50, html.dark .bg-yellow-100, html.dark .hover\:bg-yellow-100:hover { background-color: rgb(234 179 8 / .14); }
+html.dark .bg-amber-50, html.dark .bg-amber-100 { background-color: rgb(245 158 11 / .14); }
+
+html.dark .border-green-200, html.dark .border-emerald-100, html.dark .border-emerald-200 { border-color: rgb(34 197 94 / .3); }
+html.dark .border-blue-200 { border-color: rgb(59 130 246 / .3); }
+html.dark .border-indigo-200 { border-color: rgb(99 102 241 / .35); }
+html.dark .border-purple-200 { border-color: rgb(168 85 247 / .35); }
+html.dark .border-red-100, html.dark .border-red-200 { border-color: rgb(239 68 68 / .3); }
+html.dark .border-yellow-200, html.dark .border-amber-200 { border-color: rgb(234 179 8 / .3); }
+
+/* Coloured text: lift to lighter shades so it stays readable on dark surfaces */
+html.dark .text-green-600, html.dark .text-green-700, html.dark .text-green-800,
+html.dark .hover\:text-green-600:hover, html.dark .hover\:text-green-700:hover { color: #4ade80; }
+html.dark .text-emerald-600, html.dark .text-emerald-700 { color: #34d399; }
+html.dark .text-blue-600, html.dark .text-blue-700 { color: #60a5fa; }
+html.dark .text-blue-400 { color: #93c5fd; }
+html.dark .text-indigo-600, html.dark .text-indigo-700, html.dark .hover\:text-indigo-600:hover { color: #a5b4fc; }
+html.dark .text-purple-600, html.dark .text-purple-700 { color: #d8b4fe; }
+html.dark .text-red-600, html.dark .text-red-700, html.dark .hover\:text-red-600:hover { color: #fca5a5; }
+html.dark .text-yellow-600 { color: #facc15; }
+html.dark .text-amber-700, html.dark .text-amber-800 { color: #fcd34d; }
+
+/* Gradients that fade into white */
+html.dark .from-green-50 {
+  --tw-gradient-from: rgb(34 197 94 / .12) var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(34 197 94 / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+html.dark .from-yellow-50 {
+  --tw-gradient-from: rgb(234 179 8 / .14) var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(234 179 8 / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+html.dark .to-white { --tw-gradient-to: var(--surface) var(--tw-gradient-to-position); }
+
+/* Leaflet controls and popups */
+html.dark .leaflet-bar a,
+html.dark .leaflet-control-layers,
+html.dark .leaflet-popup-content-wrapper,
+html.dark .leaflet-popup-tip { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+html.dark .leaflet-control-attribution { background: rgb(20 29 26 / .8) !important; color: var(--text-muted); }
+html.dark .leaflet-control-attribution a { color: #4ade80; }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { Loader2, Recycle, MailCheck, KeyRound, AlertTriangle, RefreshCw, LogOut } from 'lucide-react';
+import { Loader2, MailCheck, KeyRound, AlertTriangle, RefreshCw, LogOut } from 'lucide-react';
+import { Logo, BRAND_NAME } from './brand';
 import { supabase, AUTH_REDIRECTS, authErrorMessage } from './supabase';
 import { useAuth } from './authContext';
 
@@ -16,23 +17,23 @@ function readUrlError() {
 
 function AuthCard({ icon, title, children }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0d2a1a] p-5">
-      <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-8">
-        <Link to="/" className="flex items-center gap-2 text-green-700 font-bold mb-6">
-          <Recycle size={22} /> SmartBin
+    <div className="min-h-dvh flex items-center justify-center bg-[#0d2a1a] p-4 sm:p-5">
+      <main className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 sm:p-8">
+        <Link to="/" aria-label={`${BRAND_NAME} home`} className="inline-flex mb-6 rounded-lg">
+          <Logo size={30} textClassName="text-lg" />
         </Link>
-        <div className="w-12 h-12 rounded-full bg-green-100 text-green-700 flex items-center justify-center mb-4">{icon}</div>
+        <div className="w-12 h-12 rounded-full bg-green-100 text-green-700 flex items-center justify-center mb-4" aria-hidden="true">{icon}</div>
         <h1 className="text-2xl font-bold text-gray-800 mb-2">{title}</h1>
         {children}
-      </div>
+      </main>
     </div>
   );
 }
 
 export function FullPageLoader({ message = 'Loading…' }) {
   return (
-    <div className="flex flex-col h-screen items-center justify-center gap-3 text-gray-600">
-      <Loader2 className="animate-spin text-green-600" size={40} />
+    <div role="status" className="flex flex-col min-h-dvh items-center justify-center gap-3 text-gray-600 px-4 text-center">
+      <Loader2 className="animate-spin text-green-600" size={40} aria-hidden="true" />
       <p className="font-semibold">{message}</p>
     </div>
   );
@@ -115,10 +116,10 @@ export function ForgotPassword() {
       <form onSubmit={submit} className="space-y-4">
         <input
           type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email Address" disabled={state === 'sending'}
+          placeholder="Email Address" aria-label="Email address" disabled={state === 'sending'}
           className="w-full p-3 rounded-xl bg-green-50 border-2 border-transparent focus:border-green-600 focus:bg-white outline-none"
         />
-        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+        {error && <p role="alert" className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
         <button type="submit" disabled={state === 'sending'} className="w-full py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2">
           {state === 'sending' ? <><Loader2 size={18} className="animate-spin" /> Sending…</> : 'Send reset link'}
         </button>
@@ -177,17 +178,17 @@ export function ResetPassword() {
       <form onSubmit={submit} className="space-y-4 mt-4">
         <input
           type="password" required minLength={8} maxLength={72} autoComplete="new-password"
-          value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password (min 8 characters)"
+          value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password (min 8 characters)" aria-label="New password"
           disabled={state === 'saving'}
           className="w-full p-3 rounded-xl bg-green-50 border-2 border-transparent focus:border-green-600 focus:bg-white outline-none"
         />
         <input
           type="password" required minLength={8} maxLength={72} autoComplete="new-password"
-          value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Confirm new password"
+          value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Confirm new password" aria-label="Confirm new password"
           disabled={state === 'saving'}
           className="w-full p-3 rounded-xl bg-green-50 border-2 border-transparent focus:border-green-600 focus:bg-white outline-none"
         />
-        {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+        {error && <p role="alert" className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
         <button type="submit" disabled={state === 'saving'} className="w-full py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2">
           {state === 'saving' ? <><Loader2 size={18} className="animate-spin" /> Saving…</> : 'Update password'}
         </button>

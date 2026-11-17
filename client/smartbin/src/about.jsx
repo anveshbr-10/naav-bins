@@ -1,5 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import AppShell from './layout';
+import { BRAND_NAME, CONTACT_EMAIL } from './brand';
 import {
     AlertCircle,
     Lightbulb,
@@ -12,8 +14,9 @@ import {
     Phone,
     MapPin,
     ArrowRight,
-    ArrowLeft,
-    Leaf
+    Leaf,
+    CheckCircle2,
+    XCircle,
 } from 'lucide-react';
 import useImpactStats from './useImpactStats';
 import { formatCo2, formatCount, formatInr, formatKg } from './format';
@@ -28,12 +31,14 @@ export default function About() {
     }, [location.hash]);
 
     const [isSending, setIsSending] = React.useState(false);
+    const [formNotice, setFormNotice] = React.useState(null); // { type: 'success' | 'error', text }
     const { status: statsStatus, stats } = useImpactStats();
     const show = (fn) => (statsStatus === 'ready' ? fn(stats) : statsStatus === 'loading' ? '…' : '—');
 
     const handleFormSubmit = async (e) => {
         e.preventDefault();
         setIsSending(true);
+        setFormNotice(null);
 
         // Grab all the data from the form
         const formData = new FormData(e.target);
@@ -52,39 +57,34 @@ export default function About() {
 
             const data = await res.json();
             if (data.success) {
-                alert("Message Sent Successfully! We will get back to you soon.");
+                setFormNotice({ type: 'success', text: 'Message sent. We will get back to you soon.' });
                 e.target.reset(); // Clears the form fields
             } else {
-                alert("Failed to send message. Please try again.");
+                setFormNotice({ type: 'error', text: 'Your message could not be sent. Please try again.' });
             }
         } catch {
-            alert("An error occurred. Please check your internet connection.");
+            setFormNotice({ type: 'error', text: 'Your message could not be sent. Check your internet connection and try again.' });
         } finally {
             setIsSending(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 font-sans pb-16">
+        <AppShell>
+        <div className="pb-16">
 
             {/* =========================================
           ABOUT SECTION
       ========================================= */}
 
             {/* 1. Headline & Short Paragraph */}
-            <div className="bg-gradient-to-br from-green-600 to-emerald-800 text-white py-20 px-4 text-center rounded-b-[3rem] shadow-xl relative">
-                <button
-                    onClick={() => navigate('/')}
-                    className="absolute top-6 left-6 flex items-center gap-2 px-3 py-2 bg-white/20 rounded-full hover:bg-white/30 transition backdrop-blur-sm text-sm font-semibold"
-                >
-                    <ArrowLeft size={18} /> Home
-                </button>
+            <div className="bg-gradient-to-br from-green-600 to-emerald-800 text-white py-16 sm:py-20 px-4 text-center rounded-b-[2rem] sm:rounded-b-[3rem] shadow-xl relative">
                 <div className="max-w-3xl mx-auto">
-                    <h1 className="text-4xl md:text-5xl font-extrabold mb-6 animate-fade-in-up">
+                    <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold mb-6 tracking-tight">
                         Revolutionizing Waste Management
                     </h1>
                     <p className="text-lg md:text-xl text-green-50 leading-relaxed opacity-90">
-                        SmartBin is an AI-powered platform that transforms how campuses and cities handle waste.
+                        {BRAND_NAME} is an AI-powered platform that transforms how campuses and cities handle waste.
                         By combining Teachable Machine learning with a rewarding incentive system, we make
                         recycling not just a responsibility, but a rewarding habit.
                     </p>
@@ -115,7 +115,7 @@ export default function About() {
                         </div>
                         <h3 className="text-2xl font-bold text-slate-800 mb-3">Our Solution</h3>
                         <p className="text-slate-600 leading-relaxed">
-                            Every Smart Bin carries a secure QR code. Users scan it, show their item to the phone
+                            Every {BRAND_NAME} bin carries a secure QR code. Users scan it, show their item to the phone
                             camera, and our AI identifies it as Plastic, Metal, Paper / Cardboard, Glass, Organic
                             or Other Trash, then tells them which bin to use. Each correctly sorted item earns
                             instant wallet money and Eco-Points.
@@ -143,7 +143,7 @@ export default function About() {
                             </h3>
                             <p className="text-emerald-50 leading-relaxed">
                                 A world where technology bridges the gap between human convenience and environmental
-                                sustainability. We envision SmartBins in every college, tech park, and public space
+                                sustainability. We envision {BRAND_NAME} in every college, tech park, and public space
                                 across the nation.
                             </p>
                         </div>
@@ -203,20 +203,20 @@ export default function About() {
             <div id="contact" className="max-w-5xl mx-auto px-4 mt-16 scroll-mt-8">
                 <h2 className="text-3xl font-bold text-center text-slate-800 mb-12">Get in Touch</h2>
 
-                <div className="grid md:grid-cols-5 gap-8 bg-white rounded-3xl shadow-lg overflow-hidden border border-slate-100">
+                <div className="grid md:grid-cols-5 md:gap-8 bg-white rounded-3xl shadow-lg overflow-hidden border border-slate-100">
 
                     {/* Contact Info (Left Side - 2 columns wide) */}
-                    <div className="md:col-span-2 bg-slate-900 text-white p-10 flex flex-col justify-between">
+                    <div className="md:col-span-2 bg-slate-900 text-white p-6 sm:p-10 flex flex-col justify-between">
                         <div>
                             <h3 className="text-2xl font-bold mb-2">Contact Information</h3>
-                            <p className="text-slate-400 mb-8">Reach out to us for college deployments, partnerships, or support queries.</p>
+                            <p className="text-slate-300 mb-8">Reach out to us for college deployments, partnerships, or support queries.</p>
 
                             <div className="space-y-6">
                                 <div className="flex items-start gap-4">
                                     <MapPin className="text-emerald-400 mt-1" size={24} />
                                     <div>
                                         <h4 className="font-semibold text-white">Our Location</h4>
-                                        <p className="text-slate-400 text-sm">Dr. Ambedkar Institute of Technology<br />Bengaluru, Karnataka</p>
+                                        <p className="text-slate-300 text-sm">Dr. Ambedkar Institute of Technology<br />Bengaluru, Karnataka</p>
                                     </div>
                                 </div>
 
@@ -224,7 +224,7 @@ export default function About() {
                                     <Phone className="text-emerald-400 mt-1" size={24} />
                                     <div>
                                         <h4 className="font-semibold text-white">Phone</h4>
-                                        <p className="text-slate-400 text-sm">+91 83103 98093</p>
+                                        <a href="tel:+918310398093" className="text-slate-300 text-sm hover:text-white underline-offset-2 hover:underline">+91 83103 98093</a>
                                     </div>
                                 </div>
 
@@ -232,7 +232,7 @@ export default function About() {
                                     <Mail className="text-emerald-400 mt-1" size={24} />
                                     <div>
                                         <h4 className="font-semibold text-white">Email</h4>
-                                        <p className="text-slate-400 text-sm">naavhackers@gmail.com</p>
+                                        <a href={`mailto:${CONTACT_EMAIL}`} className="text-slate-300 text-sm hover:text-white underline-offset-2 hover:underline break-all">{CONTACT_EMAIL}</a>
                                     </div>
                                 </div>
                             </div>
@@ -244,39 +244,44 @@ export default function About() {
                     </div>
 
                     {/* Contact Form (Right Side - 3 columns wide) */}
-                    <div className="md:col-span-3 p-10">
+                    <div className="md:col-span-3 p-6 sm:p-10">
                         <form onSubmit={handleFormSubmit} className="space-y-6">
-                            <div className="grid grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">First Name</label>
-                                    {/* Added name="First Name" */}
-                                    <input type="text" name="First Name" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="John" disabled={isSending} />
+                                    <label htmlFor="contact-first" className="block text-sm font-medium text-slate-700 mb-1">First Name</label>
+                                    <input id="contact-first" type="text" name="First Name" autoComplete="given-name" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="John" disabled={isSending} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Last Name</label>
-                                    {/* Added name="Last Name" */}
-                                    <input type="text" name="Last Name" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="Doe" disabled={isSending} />
+                                    <label htmlFor="contact-last" className="block text-sm font-medium text-slate-700 mb-1">Last Name</label>
+                                    <input id="contact-last" type="text" name="Last Name" autoComplete="family-name" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="Doe" disabled={isSending} />
                                 </div>
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-                                {/* Added name="Email" */}
-                                <input type="email" name="Email" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="john@example.com" disabled={isSending} />
+                                <label htmlFor="contact-email" className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
+                                <input id="contact-email" type="email" name="Email" autoComplete="email" required className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50" placeholder="john@example.com" disabled={isSending} />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Message</label>
-                                {/* Added name="Message" */}
-                                <textarea name="Message" required rows="4" className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50 resize-none" placeholder="How can we help you?" disabled={isSending}></textarea>
+                                <label htmlFor="contact-message" className="block text-sm font-medium text-slate-700 mb-1">Message</label>
+                                <textarea id="contact-message" name="Message" required rows="4" className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none transition bg-slate-50 resize-none" placeholder="How can we help you?" disabled={isSending}></textarea>
                             </div>
-
-                            {/* Added dynamic button text and disabled state */}
+                            {formNotice && (
+                                <p
+                                    role={formNotice.type === 'error' ? 'alert' : 'status'}
+                                    className={`flex items-start gap-2 text-sm rounded-xl p-3 ${formNotice.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800'}`}
+                                >
+                                    {formNotice.type === 'error'
+                                        ? <XCircle size={18} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+                                        : <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" aria-hidden="true" />}
+                                    {formNotice.text}
+                                </p>
+                            )}
                             <button
                                 type="submit"
                                 disabled={isSending}
                                 className={`font-bold py-3 px-8 rounded-xl transition w-full md:w-auto flex items-center justify-center gap-2
-                                    ${isSending ? 'bg-slate-400 cursor-not-allowed text-white' : 'bg-slate-900 hover:bg-emerald-600 text-white'}`}
+                                    ${isSending ? 'bg-emerald-600/60 cursor-not-allowed text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
                             >
                                 {isSending ? "Sending..." : "Send Message"}
                             </button>
@@ -285,5 +290,6 @@ export default function About() {
                 </div>
             </div>
         </div>
+        </AppShell>
     );
 }

@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase, AUTH_REDIRECTS, SOCIAL_PROVIDERS, getEnabledProviders, authErrorMessage } from './supabase';
 import { useAuth } from './authContext';
 import { FullPageLoader, ProfileLoadError } from './authPages';
+import { Logo, BRAND_NAME } from './brand';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
 const styles = `
@@ -115,7 +116,7 @@ const styles = `
   }
   .form-subtitle {
     font-size: 13px;
-    color: #888;
+    color: #5f6f69;
     margin-bottom: 18px;
     font-family: 'Nunito', sans-serif;
   }
@@ -167,7 +168,7 @@ const styles = `
     color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer;
   }
 
-  .divider-row span { font-size: 12px; color: #aaa; white-space: nowrap; }
+  .divider-row span { font-size: 12px; color: #66756f; white-space: nowrap; }
   .divider-line { flex: 1; height: 1px; background: #e5e7eb; }
   .auth-input {
     width: 100%;
@@ -228,7 +229,7 @@ const styles = `
 
   .wake-note {
     font-size: 11px;
-    color: #bbb;
+    color: #66756f;
     margin-top: 10px;
     display: flex;
     align-items: center;
@@ -327,6 +328,26 @@ const styles = `
   }
   .transparent-btn:hover { background: rgba(255,255,255,0.18); transform: translateY(-2px); }
 
+  .auth-home {
+    position: absolute; top: 20px; left: 20px; z-index: 20;
+    border-radius: 12px; text-decoration: none;
+  }
+
+  /* ── Dark theme ── */
+  .dark .auth-page { background-color: #070d0b; }
+  .dark .auth-wrapper { background: #141d1a; box-shadow: 0 30px 80px rgba(0,0,0,0.7); }
+  .dark form h1 { color: #e9f0ed; }
+  .dark .form-subtitle, .dark .divider-row span, .dark .wake-note, .dark .mobile-switch p { color: #93a39d; }
+  .dark .divider-line { background: #31423b; }
+  .dark .auth-input { background: #1b2622; color: #e9f0ed; }
+  .dark .auth-input::placeholder { color: #93a39d; }
+  .dark .auth-input:focus { background: #141d1a; border-color: #4ade80; }
+  .dark .social-links button { border-color: #31423b; color: #4ade80; }
+  .dark .forgot-link { color: #4ade80; }
+  .dark .form-note.error { background: rgba(239,68,68,.14); color: #fca5a5; }
+  .dark .form-note.success { background: rgba(34,197,94,.13); color: #86efac; }
+  .dark .mobile-switch-btn { color: #4ade80; border-color: #4ade80; }
+
   /* ── Mobile ── */
   .mobile-switch { display: none; margin-top: 20px; text-align: center; }
 
@@ -334,6 +355,7 @@ const styles = `
   .spin { animation: spin 1s linear infinite; }
 
   @media (max-width: 768px) {
+    .auth-page { padding: 84px 16px 24px; align-items: flex-start; }
     .auth-wrapper { min-height: auto; border-radius: 16px; }
     .auth-form-box { position: static !important; width: 100% !important; transform: none !important; opacity: 1 !important; transition: none !important; }
     .register-form-box { display: none; }
@@ -401,7 +423,7 @@ function SocialButtons({ disabled, onSelect }) {
             disabled={disabled}
             onClick={() => onSelect(p)}
           >
-            <i className={p.icon}></i>
+            <i className={p.icon} aria-hidden="true"></i>
           </button>
         ))}
       </div>
@@ -532,11 +554,15 @@ function Auth({ initialPanel = 'login' }) {
     <>
       <style>{styles}</style>
       <div className="auth-page">
+        <Link to="/" className="auth-home" aria-label={`${BRAND_NAME} home`}>
+          <Logo size={34} tone="light" />
+        </Link>
         {/* Floating leaves background */}
         {LEAVES.map((l, i) => (
           <div
             key={i}
             className="leaf"
+            aria-hidden="true"
             style={{ left: l.left, animationDelay: l.delay, animationDuration: l.dur }}
           >
             <LeafSVG color={l.color} size={l.size} />
@@ -547,12 +573,13 @@ function Auth({ initialPanel = 'login' }) {
           <div className="auth-form-box register-form-box">
             <form onSubmit={handleRegister}>
               <h1>Create Account</h1>
-              <p className="form-subtitle">Join the SmartBin revolution today</p>
+              <p className="form-subtitle">Join {BRAND_NAME} and start earning for recycling</p>
               <SocialButtons disabled={regLoading || socialBusy} onSelect={(p) => handleSocial(p, setRegNotice)} />
               <input
                 required type="text"
                 className="auth-input"
                 placeholder="Full Name"
+                aria-label="Full Name"
                 maxLength={60}
                 autoComplete="name"
                 value={regName}
@@ -563,6 +590,7 @@ function Auth({ initialPanel = 'login' }) {
                 required type="email"
                 className="auth-input"
                 placeholder="Email Address"
+                aria-label="Email Address"
                 autoComplete="email"
                 value={regEmail}
                 onChange={(e) => setRegEmail(e.target.value)}
@@ -572,6 +600,7 @@ function Auth({ initialPanel = 'login' }) {
                 required type="password"
                 className="auth-input"
                 placeholder="Password (min 8 characters)"
+                aria-label="Password (min 8 characters)"
                 minLength={8}
                 maxLength={72}
                 autoComplete="new-password"
@@ -598,12 +627,13 @@ function Auth({ initialPanel = 'login' }) {
           <div className="auth-form-box login-form-box">
             <form onSubmit={handleLogin}>
               <h1>Welcome Back</h1>
-              <p className="form-subtitle">Login with your SmartBin Credentials</p>
+              <p className="form-subtitle">Sign in to your {BRAND_NAME} account</p>
               <SocialButtons disabled={loginLoading || socialBusy} onSelect={(p) => handleSocial(p, setLoginNotice)} />
               <input
                 required type="email"
                 className="auth-input"
                 placeholder="Email Address"
+                aria-label="Email Address"
                 autoComplete="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
@@ -613,6 +643,7 @@ function Auth({ initialPanel = 'login' }) {
                 required type="password"
                 className="auth-input"
                 placeholder="Password"
+                aria-label="Password"
                 autoComplete="current-password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
@@ -641,7 +672,7 @@ function Auth({ initialPanel = 'login' }) {
               <div className="panel-content panel-content-left">
                 <div className="panel-icon">🌿</div>
                 <h1>Already have an account?</h1>
-                <p>Stay connected. Sign in with your credentials and continue your green journey with SmartBin.</p>
+                <p>Stay connected. Sign in with your credentials and continue your green journey with {BRAND_NAME}.</p>
                 <button className="transparent-btn" onClick={() => setPanelActive(false)}>Sign In</button>
               </div>
               {/* Right side — visible by default */}

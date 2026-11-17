@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, LocateFixed, Navigation, RefreshCw, ChevronDown, ChevronUp, MapPinOff, WifiOff } from 'lucide-react';
+import { Loader2, LocateFixed, Navigation, RefreshCw, ChevronDown, ChevronUp, MapPinOff, WifiOff } from 'lucide-react';
 import api from './api';
-import { useAuth } from './authContext';
+import AppShell from './layout';
 
 // Only used until bins load; afterwards the map fits to wherever the bins actually are.
 const FALLBACK_CENTER = [12.9637, 77.5058];
@@ -44,9 +44,8 @@ function el(tag, css, text) {
     return node;
 }
 
-export default function SmartBinMap() {
+export default function BinMap() {
     const navigate = useNavigate();
-    const session = useAuth().status === 'signedIn';
 
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);
@@ -256,21 +255,15 @@ export default function SmartBinMap() {
     }[geoState];
 
     return (
-        <div className="h-dvh w-full flex flex-col bg-slate-100">
+        <AppShell fullHeight>
+        <div className="flex-1 min-h-0 w-full flex flex-col bg-slate-100">
 
             {/* HEADER */}
-            <header className="flex items-center justify-between gap-3 bg-white px-4 py-3 shadow-sm">
+            <div className="flex items-center justify-between gap-3 bg-white px-4 py-3 border-b border-slate-200">
                 <div className="flex items-center gap-3 min-w-0">
-                    <button
-                        onClick={() => navigate(session ? '/dashboard' : '/')}
-                        aria-label="Back"
-                        className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition flex-shrink-0"
-                    >
-                        <ArrowLeft className="text-slate-700" size={22} />
-                    </button>
                     <div className="min-w-0">
-                        <h1 className="text-lg font-bold text-slate-800 truncate">Smart Bin Locations</h1>
-                        <p className="text-xs text-slate-500 truncate">
+                        <h1 className="text-lg font-bold text-slate-800 truncate">Bin map</h1>
+                        <p className="text-xs text-slate-500 truncate" aria-live="polite">
                             {loadState === 'ready' || bins.length
                                 ? `${bins.length} bins · ${activeCount} accepting items`
                                 : 'Loading bins…'}
@@ -294,7 +287,7 @@ export default function SmartBinMap() {
                         <span className="hidden sm:inline">My location</span>
                     </button>
                 </div>
-            </header>
+            </div>
 
             <div className="flex-1 min-h-0 flex flex-col-reverse md:flex-row">
 
@@ -366,10 +359,10 @@ export default function SmartBinMap() {
 
                 {/* MAP */}
                 <div className="relative flex-1 min-h-0">
-                    <div ref={mapContainerRef} className="absolute inset-0 z-0" />
+                    <div ref={mapContainerRef} className="absolute inset-0 z-0" role="region" aria-label="Map of smart bins" />
 
                     {loadState === 'loading' && !bins.length && (
-                        <div className="absolute inset-0 z-[1000] flex flex-col items-center justify-center bg-slate-900/70 backdrop-blur-sm text-white">
+                        <div role="status" className="absolute inset-0 z-[1000] flex flex-col items-center justify-center bg-slate-900/70 backdrop-blur-sm text-white">
                             <Loader2 className="animate-spin w-12 h-12 text-emerald-400 mb-4" />
                             <p className="text-lg font-bold tracking-wide">Loading bins…</p>
                             <p className="text-xs text-slate-300 mt-1">The server may take up to 30 seconds to wake up.</p>
@@ -407,5 +400,6 @@ export default function SmartBinMap() {
                 </div>
             </div>
         </div>
+        </AppShell>
     );
 }

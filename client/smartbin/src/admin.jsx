@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Users, Search, Wallet, Leaf, ArrowUpRight, Download, LogOut, ShieldCheck, Loader2, RefreshCw,
+    Users, Search, Wallet, Leaf, ArrowUpRight, Download, ShieldCheck, Loader2, RefreshCw,
     X, Landmark, Ticket, Recycle, WifiOff,
 } from 'lucide-react';
+import AppShell from './layout';
+import useDialog from './useDialog';
 import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
 import { formatCo2, formatCount, formatDate, formatDateTime, formatInr } from './format';
@@ -87,6 +89,18 @@ function RedemptionActions({ userId, redemption, busyKey, confirming, onAsk, onC
                     {a.label}
                 </button>
             ))}
+        </div>
+    );
+}
+
+// Backdrop + dialog behaviour (focus, Escape, scroll lock) for the user detail panel.
+function UserDrawer({ onClose, children }) {
+    const ref = useDialog(onClose);
+    return (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+            <div ref={ref} tabIndex={-1} className="contents" onClick={(e) => e.stopPropagation()}>
+                {children}
+            </div>
         </div>
     );
 }
@@ -194,34 +208,31 @@ export default function Admin() {
 
     // ---------- Render ----------
     return (
-        <div className="min-h-screen bg-slate-50">
+        <AppShell footer={false}>
 
-            {/* TOP NAVIGATION */}
-            <nav className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 flex justify-between items-center sticky top-0 z-20">
-                <div className="flex items-center gap-3">
-                    <div className="bg-indigo-600 p-2 rounded-lg">
-                        <ShieldCheck className="text-white w-6 h-6" />
+            {/* PAGE HEADER */}
+            <div className="bg-white border-b border-slate-200">
+                <div className="max-w-7xl mx-auto px-4 md:px-8 py-5 flex justify-between items-center gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className="bg-indigo-600 p-2 rounded-lg flex-shrink-0">
+                            <ShieldCheck className="text-white w-6 h-6" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                            <h1 className="text-xl font-bold text-slate-800">Admin portal</h1>
+                            <p className="text-xs text-slate-500">Users, payouts and voucher approvals</p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-xl font-bold text-slate-800">Admin Portal</h1>
-                        <p className="text-xs text-slate-500">SmartBin Developer Console</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-4">
-                    <button onClick={retry} aria-label="Refresh" className="text-slate-500 hover:text-indigo-600 transition">
-                        <RefreshCw size={18} />
-                    </button>
                     <button
-                        onClick={async () => { await signOut(); navigate('/'); }}
-                        className="flex items-center gap-2 text-slate-500 hover:text-red-600 transition font-medium"
+                        onClick={retry}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:text-indigo-600 hover:bg-slate-100 transition"
                     >
-                        <LogOut size={18} /> Logout
+                        <RefreshCw size={16} aria-hidden="true" /> <span className="hidden sm:inline">Refresh</span>
                     </button>
                 </div>
-            </nav>
+            </div>
 
             {loadState === 'loading' && (
-                <div className="flex flex-col items-center justify-center py-32 text-slate-500 gap-3">
+                <div role="status" className="flex flex-col items-center justify-center py-32 text-slate-500 gap-3">
                     <Loader2 className="animate-spin text-indigo-600" size={36} />
                     <p className="font-medium">Loading users…</p>
                 </div>
@@ -321,13 +332,14 @@ export default function Admin() {
                                 <p className="text-sm text-slate-500">Manage and view all registered recyclers.</p>
                             </div>
                             <div className="relative">
-                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5" />
+                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5" aria-hidden="true" />
                                 <input
-                                    type="text"
+                                    type="search"
+                                    aria-label="Search users by name or email"
                                     placeholder="Search users..."
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-64 transition"
+                                    className="pl-10 pr-4 py-2 border border-slate-200 bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-64 transition"
                                 />
                             </div>
                         </div>
@@ -413,13 +425,12 @@ export default function Admin() {
 
             {/* USER DETAIL DRAWER */}
             {selectedUser && (
-                <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={() => setSelectedId(null)}>
+                <UserDrawer onClose={() => setSelectedId(null)}>
                     <aside
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="user-detail-title"
-                        className="bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl"
-                        onClick={(e) => e.stopPropagation()}
+                        className="bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl outline-none"
                     >
                         <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 sticky top-0 bg-white">
                             <div className="min-w-0">
@@ -496,8 +507,8 @@ export default function Admin() {
                             )}
                         </div>
                     </aside>
-                </div>
+                </UserDrawer>
             )}
-        </div>
+        </AppShell>
     );
 }

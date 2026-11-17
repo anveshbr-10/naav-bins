@@ -5,6 +5,8 @@ import Webcam from 'react-webcam';
 import { useNavigate } from 'react-router-dom';
 import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
+import AppShell from './layout';
+import { BRAND_NAME } from './brand';
 import { Loader2, ScanQrCode, Camera, CheckCircle2, Flashlight, FlashlightOff, RefreshCw } from 'lucide-react';
 
 // UI metadata per model class. Reward amounts are NOT here — the server decides and returns them.
@@ -290,7 +292,7 @@ export default function Scanner() {
       onClick={toggleTorch}
       aria-label={torch.on ? "Turn flash off" : "Turn flash on"}
       className={`flex items-center gap-2 px-3 py-2 rounded-full text-xs font-bold backdrop-blur transition ${torch.on
-        ? 'bg-yellow-300 text-slate-900'
+        ? 'bg-yellow-300 text-black'
         : 'bg-slate-900/70 text-white border border-slate-600'} ${className}`}
     >
       {torch.on ? <Flashlight size={16} /> : <FlashlightOff size={16} />}
@@ -299,7 +301,8 @@ export default function Scanner() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center p-4 pt-8 font-sans">
+    <AppShell footer={false} className="bg-slate-950 flex flex-col">
+    <div className="flex-1 bg-slate-950 text-white flex flex-col items-center px-4 pt-6 pb-10">
 
       <style>{`
         @keyframes scan-down {
@@ -325,14 +328,14 @@ export default function Scanner() {
       `}</style>
 
       {/* HEADER */}
-      <div className="flex items-center gap-3 mb-8">
+      <div className="flex items-center gap-3 mb-6 w-full max-w-md">
         <div className="p-3 bg-emerald-500/20 rounded-xl">
-          <ScanQrCode className="text-emerald-400 w-8 h-8" />
+          <ScanQrCode className="text-emerald-400 w-8 h-8" aria-hidden="true" />
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-white">Smart Bin Scanner</h1>
-          <p className="text-slate-400 text-sm">Scan → Identify → Earn</p>
-          <p className="text-emerald-400 text-sm font-bold flex items-center gap-1">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-white">Scan a bin</h1>
+          <p className="text-[#a3b1ac] text-sm">Scan → Identify → Earn</p>
+          <p className="text-emerald-400 text-sm font-bold flex items-center gap-1 truncate">
             📍 {currentLocation || 'Scan a bin QR code to begin'}
           </p>
         </div>
@@ -343,8 +346,8 @@ export default function Scanner() {
         <div className="w-full max-w-md">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl mb-6 text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-cyan-500"></div>
-            <h2 className="text-lg font-semibold text-white mb-2">Locate a Smart Bin</h2>
-            <p className="text-slate-400 text-sm mb-6">Point your camera at the QR code on the bin.</p>
+            <h2 className="text-lg font-semibold text-white mb-2">Find a {BRAND_NAME} bin</h2>
+            <p className="text-[#a3b1ac] text-sm mb-6">Point your camera at the QR code on the bin.</p>
             <div className="bg-black rounded-xl overflow-hidden border-2 border-dashed border-slate-700 relative h-64 md:h-80 w-full flex items-center justify-center">
               <div id="reader" className="w-full h-full"></div>
               <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500 shadow-[0_0_20px_#10b981] animate-scan-down pointer-events-none z-10"></div>
@@ -352,7 +355,7 @@ export default function Scanner() {
             </div>
             {qrError ? (
               <div className="mt-4">
-                <p className="text-red-400 text-xs font-bold">{qrError}</p>
+                <p role="alert" className="text-red-400 text-xs font-bold">{qrError}</p>
                 <button
                   onClick={rescan}
                   className="mt-3 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-bold hover:bg-slate-700"
@@ -361,7 +364,7 @@ export default function Scanner() {
                 </button>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 mt-4 flex items-center justify-center gap-1">
+              <p className="text-xs text-[#a3b1ac] mt-4 flex items-center justify-center gap-1">
                 <Camera size={14} /> Auto-scanning active
               </p>
             )}
@@ -425,12 +428,13 @@ export default function Scanner() {
 
           {/* Status text — only when not identified */}
           {!detected && (
-            <p className="text-xl font-bold text-white mt-6 mb-2 text-center">{status}</p>
+            <p aria-live="polite" className="text-xl font-bold text-white mt-6 mb-2 text-center">{status}</p>
           )}
 
           {/* RESULT CARD */}
           {detected && (
             <div
+              role="status"
               className="result-card w-full mt-5 rounded-2xl overflow-hidden shadow-2xl"
               style={{ background: '#0f172a', border: `1px solid ${detected.hex}44` }}
             >
@@ -499,5 +503,6 @@ export default function Scanner() {
         </div>
       )}
     </div>
+    </AppShell>
   );
 }

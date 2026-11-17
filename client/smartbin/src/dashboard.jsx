@@ -4,9 +4,11 @@ import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
 import RedeemModal from './redeemModal';
 import { formatCo2, formatDateTime } from './format';
+import AppShell from './layout';
+import { useTheme } from './themeContext';
 import {
-  Wallet, Leaf, LogOut, History, Ticket, Bus, Train, Trophy, MapPin, ScanQrCode, Gift,
-  Receipt, RefreshCw, Loader2, TreePine, WifiOff,
+  Wallet, Leaf, LogOut, History, Ticket, Bus, Train, MapPin, ScanQrCode, Gift,
+  Receipt, RefreshCw, Loader2, TreePine, WifiOff, Map as MapIcon,
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
@@ -45,6 +47,10 @@ export default function Dashboard() {
   const [redeemEntry, setRedeemEntry] = useState(null);
 
   const { signOut } = useAuth();
+  const { resolved: theme } = useTheme();
+  const chart = theme === 'dark'
+    ? { grid: '#24312c', axis: '#93a39d', tooltip: { background: '#141d1a', border: '1px solid #31423b', borderRadius: 12, color: '#e9f0ed' } }
+    : { grid: '#eef2f0', axis: '#66756f', tooltip: { background: '#ffffff', border: '1px solid #e8eeeb', borderRadius: 12, color: '#111a16' } };
   const goToLogin = useCallback(async () => { await signOut(); navigate('/login', { replace: true }); }, [signOut, navigate]);
 
   // Only an authentication failure logs the user out; network/server errors show a retry screen.
@@ -70,6 +76,19 @@ export default function Dashboard() {
     .catch(() => setCatalogFailed(true)), []);
 
   useEffect(() => { fetchUserData(); }, [fetchUserData]);
+
+  // Most dashboard visits end with a scan: fetch the scanner code (incl. the AI runtime) while the
+  // page is idle, so "Scan a Bin" opens instantly. Skipped when the user has asked to save data.
+  useEffect(() => {
+    if (navigator.connection?.saveData) return undefined;
+    const prefetch = () => { import('./scanner').catch(() => { /* loaded on demand instead */ }); };
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(prefetch, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(prefetch, 2000);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => { fetchCatalog(); }, [fetchCatalog]);
 
   const retry = () => {
@@ -81,18 +100,21 @@ export default function Dashboard() {
   // ---------- Loading / error screens ----------
   if (loadState === 'loading') {
     return (
-      <div className="flex flex-col h-screen items-center justify-center gap-3 text-gray-600">
-        <Loader2 className="animate-spin text-green-600" size={40} />
-        <p className="font-bold text-xl">Loading Dashboard...</p>
-        <p className="text-sm text-gray-400">The server may take up to 30 seconds to wake up.</p>
-      </div>
+      <AppShell footer={false}>
+        <div role="status" className="flex flex-col py-32 items-center justify-center gap-3 text-gray-600 px-4 text-center">
+          <Loader2 className="animate-spin text-green-600" size={40} aria-hidden="true" />
+          <p className="font-bold text-xl">Loading your dashboard…</p>
+          <p className="text-sm text-gray-500">The server may take up to 30 seconds to wake up.</p>
+        </div>
+      </AppShell>
     );
   }
 
   if (loadState === 'error' || loadState === 'missing') {
     const missing = loadState === 'missing';
     return (
-      <div className="flex flex-col h-screen items-center justify-center gap-4 p-6 text-center">
+      <AppShell footer={false}>
+      <div role="alert" className="flex flex-col py-24 items-center justify-center gap-4 p-6 text-center">
         <WifiOff className="text-gray-400" size={48} />
         <h1 className="text-2xl font-bold text-gray-800">{missing ? 'Profile not found' : 'Could not load your dashboard'}</h1>
         <p className="text-gray-500 max-w-md">
@@ -111,6 +133,7 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+      </AppShell>
     );
   }
 
@@ -137,32 +160,17 @@ export default function Dashboard() {
   const withdrawal = (catalog?.redeem || []).find(r => r.type === 'money');
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <AppShell>
+    <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8">
 
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 bg-white p-6 rounded-2xl shadow-sm gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800">Hello, {user.name}!</h1>
-          <p className="text-gray-500">Your Impact & Rewards Dashboard</p>
-        </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <button
-            onClick={() => navigate('/leaderboard')}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-yellow-50 text-yellow-600 px-5 py-3 rounded-xl font-bold hover:bg-yellow-100 transition border border-yellow-200"
-          >
-            <Trophy size={20} /> <span className="hidden sm:inline">Leaderboard</span>
-          </button>
-          <button
-            onClick={async () => { await signOut(); navigate('/'); }}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition"
-          >
-            <LogOut size={20} /> <span className="hidden sm:inline">Logout</span>
-          </button>
-        </div>
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">Hello, {user.name}!</h1>
+        <p className="text-gray-500">Your impact and rewards at a glance.</p>
       </div>
 
       {/* STATS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
             <h2 className="text-gray-400 font-medium">Wallet Balance</h2>
@@ -176,25 +184,25 @@ export default function Dashboard() {
               </button>
             )}
           </div>
-          <Wallet className="text-green-600" size={40} />
+          <Wallet className="text-green-600" size={40} aria-hidden="true" />
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
             <h2 className="text-gray-400 font-medium">Eco Points</h2>
             <p className="text-4xl font-bold text-blue-600">{user.ecoPoints ?? 0}</p>
-            <p className="text-xs text-blue-400 mt-1">Redeem below</p>
+            <p className="text-xs text-gray-500 mt-1">Redeem below</p>
           </div>
-          <Leaf className="text-blue-600" size={40} />
+          <Leaf className="text-blue-600" size={40} aria-hidden="true" />
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
             <h2 className="text-gray-400 font-medium">CO₂ Saved <span className="text-xs">(est.)</span></h2>
             <p className="text-4xl font-bold text-yellow-600">{formatCo2(impact?.co2Kg)}</p>
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-gray-500 mt-1">
               {impact?.items ?? logs.length} items · ~{impact?.wasteKg ?? 0} kg recycled
             </p>
           </div>
-          <TreePine className="text-yellow-600" size={40} />
+          <TreePine className="text-yellow-600" size={40} aria-hidden="true" />
         </div>
       </div>
 
@@ -202,28 +210,28 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
         <button
           onClick={() => navigate('/scan')}
-          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white w-full py-5 text-xl rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition transform font-bold flex items-center justify-center gap-3"
+          className="bg-gradient-to-r from-green-600 to-emerald-600 text-white w-full py-4 sm:py-5 text-lg sm:text-xl rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition transform font-bold flex items-center justify-center gap-3"
         >
-          <ScanQrCode /> Scan a Bin
+          <ScanQrCode aria-hidden="true" /> Scan a Bin
         </button>
         <button
           onClick={() => navigate('/map')}
-          className="bg-white text-green-700 border-2 border-green-600 w-full py-5 text-xl rounded-2xl shadow-sm hover:bg-green-50 transition font-bold flex items-center justify-center gap-3"
+          className="bg-white text-green-700 border-2 border-green-600 w-full py-4 sm:py-5 text-lg sm:text-xl rounded-2xl shadow-sm hover:bg-green-50 transition font-bold flex items-center justify-center gap-3"
         >
-          🗺️ Find Nearby Bins
+          <MapIcon aria-hidden="true" /> Find Nearby Bins
         </button>
       </div>
 
       {/* CHARTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8 mb-10">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80">
           <h3 className="text-lg font-bold mb-4 text-gray-700">Earnings Trend</h3>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={earningsData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="name" />
-              <YAxis allowDecimals={false} />
-              <Tooltip formatter={(value) => [`₹${value}`, 'Earnings']} />
+              <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+              <XAxis dataKey="name" stroke={chart.axis} tick={{ fill: chart.axis, fontSize: 12 }} />
+              <YAxis allowDecimals={false} stroke={chart.axis} tick={{ fill: chart.axis, fontSize: 12 }} width={32} />
+              <Tooltip contentStyle={chart.tooltip} labelStyle={{ color: chart.tooltip.color }} formatter={(value) => [`₹${value}`, 'Earnings']} />
               <Line type="monotone" dataKey="earnings" stroke="#16a34a" strokeWidth={3} dot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
@@ -234,15 +242,15 @@ export default function Dashboard() {
           {pieData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={75} paddingAngle={3} dataKey="value">
+                <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={75} paddingAngle={3} dataKey="value" stroke="none">
                   {pieData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                 </Pie>
-                <Tooltip formatter={(value, name) => [`${value} item${value === 1 ? '' : 's'}`, name]} />
-                <Legend verticalAlign="bottom" iconType="circle" iconSize={10} />
+                <Tooltip contentStyle={chart.tooltip} itemStyle={{ color: chart.tooltip.color }} formatter={(value, name) => [`${value} item${value === 1 ? '' : 's'}`, name]} />
+                <Legend verticalAlign="bottom" iconType="circle" iconSize={10} wrapperStyle={{ color: chart.axis, fontSize: 12 }} />
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center text-gray-400 gap-2">
+            <div className="flex-1 flex flex-col items-center justify-center text-center text-gray-500 gap-2">
               <span className="text-4xl">♻️</span>
               <p>No items recycled yet.</p>
               <p className="text-sm">Scan a bin and deposit your first item to see your mix here.</p>
@@ -292,7 +300,7 @@ export default function Dashboard() {
             <Loader2 className="animate-spin" size={18} /> Loading rewards…
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
             {vouchers.map(v => {
               const { Icon, bg, fg } = ITEM_STYLE[v.item] || DEFAULT_ITEM_STYLE;
               const affordable = (user.ecoPoints ?? 0) >= v.cost;
@@ -305,7 +313,7 @@ export default function Dashboard() {
                     <span className="font-bold text-blue-600">{v.cost} Pts</span>
                     <button
                       onClick={() => setRedeemEntry(v)}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold ${affordable ? 'bg-gray-900 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-400'}`}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold ${affordable ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-100 text-gray-600'}`}
                     >
                       {affordable ? 'Redeem' : `Need ${v.cost - (user.ecoPoints ?? 0)} more`}
                     </button>
@@ -338,7 +346,7 @@ export default function Dashboard() {
               </div>
             ))
           ) : (
-            <div className="p-6 text-center text-gray-400">No redemptions yet. Your vouchers and withdrawals will appear here.</div>
+            <div className="p-6 text-center text-gray-500">No redemptions yet. Your vouchers and withdrawals will appear here.</div>
           )}
         </div>
       </div>
@@ -377,7 +385,7 @@ export default function Dashboard() {
               );
             })
           ) : (
-            <div className="p-6 text-center text-gray-400">No activity yet. Scan some items to see data!</div>
+            <div className="p-6 text-center text-gray-500">No activity yet. Scan some items to see data!</div>
           )}
         </div>
       </div>
@@ -393,5 +401,6 @@ export default function Dashboard() {
         />
       )}
     </div>
+    </AppShell>
   );
 }

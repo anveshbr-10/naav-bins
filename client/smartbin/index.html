@@ -3,12 +3,41 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>smartbin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Naav Bins · Scan. Sort. Earn.</title>
+  <meta name="description" content="Naav Bins rewards you for recycling right. Scan a smart bin, let the AI identify your item, and earn money and Eco-Points." />
+  <meta name="application-name" content="Naav Bins" />
+  <meta name="theme-color" content="#15803d" />
+  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Naav Bins" />
+  <meta property="og:title" content="Naav Bins" />
+  <meta property="og:description" content="Scan. Sort. Earn. AI-assisted waste sorting that rewards every correctly binned item." />
+  <meta property="og:image" content="/icons/icon-512.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script>
+    // Apply the saved or system theme before first paint (no light flash in dark mode).
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('naav-theme'); } catch (e) { /* storage blocked */ }
+      var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (dark) {
+        document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = 'dark';
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0c1311');
+      }
+    })();
+  </script>
 </head>
 
 <body>
+  <noscript>Naav Bins needs JavaScript to run.</noscript>
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>

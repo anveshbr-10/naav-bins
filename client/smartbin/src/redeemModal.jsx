@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import useDialog from './useDialog';
 import { Loader2, X, Copy, Check, ExternalLink, Ticket, Landmark } from 'lucide-react';
 import api, { apiErrorMessage, apiStatus } from './api';
 
@@ -18,11 +19,7 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
   const costLabel = isMoney ? `₹${entry.cost}` : `${entry.cost} pts`;
   const upiValid = UPI_RE.test(upiId.trim());
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && phase !== 'submitting') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [phase, onClose]);
+  const dialogRef = useDialog(onClose, phase !== 'submitting');
 
   const submit = async () => {
     setError(null);
@@ -53,10 +50,12 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
       onClick={() => phase !== 'submitting' && onClose()}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="redeem-title"
-        className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 relative"
+        className="bg-white outline-none w-full max-w-md rounded-2xl shadow-2xl p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -97,9 +96,11 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
                   onChange={(e) => setUpiId(e.target.value)}
                   placeholder="yourname@bank"
                   disabled={phase === 'submitting'}
-                  className="mt-1 w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
+                  aria-invalid={Boolean(upiId) && !upiValid}
+                  aria-describedby="upi-hint"
+                  className="mt-1 w-full p-3 border border-gray-300 bg-white rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
                 />
-                {upiId && !upiValid && <span className="text-xs text-red-500">Enter a valid UPI ID, e.g. name@okaxis</span>}
+                {upiId && !upiValid && <span id="upi-hint" className="text-xs text-red-600">Enter a valid UPI ID, e.g. name@okaxis</span>}
               </label>
             )}
 
@@ -108,7 +109,7 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
                 You need {isMoney ? `₹${shortBy}` : `${shortBy} more points`} to redeem this. Keep recycling!
               </p>
             )}
-            {error && <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
+            {error && <p role="alert" className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
 
             <div className="mt-6 flex gap-3">
               <button
@@ -121,7 +122,7 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
               <button
                 onClick={submit}
                 disabled={phase === 'submitting' || shortBy > 0 || (isMoney && !upiValid)}
-                className="flex-1 py-3 rounded-xl font-bold bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {phase === 'submitting' ? <><Loader2 size={18} className="animate-spin" /> Processing…</> : `Confirm · ${costLabel}`}
               </button>
@@ -144,14 +145,14 @@ export default function RedeemModal({ entry, walletBalance, ecoPoints, onClose, 
             </p>
 
             <div className="mt-5 bg-gray-50 border border-dashed border-gray-300 rounded-xl p-4">
-              <p className="text-xs uppercase tracking-widest text-gray-400">{isMoney ? 'Reference' : 'Voucher code'}</p>
+              <p className="text-xs uppercase tracking-widest text-gray-500">{isMoney ? 'Reference' : 'Voucher code'}</p>
               <div className="flex items-center justify-center gap-3 mt-1">
                 <span className="text-2xl font-mono font-extrabold tracking-wider text-gray-800">{result.code}</span>
                 <button onClick={copyCode} aria-label="Copy code" className="text-gray-400 hover:text-gray-700">
                   {copied ? <Check size={18} className="text-green-600" /> : <Copy size={18} />}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-2">Status: {result.status} · Saved in your Redemption History</p>
+              <p className="text-xs text-gray-500 mt-2">Status: {result.status} · Saved in your Redemption History</p>
             </div>
 
             <div className="mt-6 flex flex-col gap-3">
