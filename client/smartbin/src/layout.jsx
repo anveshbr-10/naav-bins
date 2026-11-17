@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import {
   Home, LayoutDashboard, Map, ScanQrCode, Trophy, Info, LogOut, Moon, Sun, ShieldCheck, Download, Languages, Check, Store,
 } from 'lucide-react';
@@ -8,6 +8,8 @@ import { useTheme } from './themeContext';
 import { useI18n, LANGUAGES, tk } from './i18n';
 import { useInstallPrompt } from './pwa';
 import { Logo, BRAND_NAME, CONTACT_EMAIL } from './brand';
+import { BackButton } from './nav';
+import { useLogout } from './logout';
 
 export function ThemeToggle({ className = '' }) {
   const { resolved, toggle } = useTheme();
@@ -111,19 +113,19 @@ const desktopLink = ({ isActive }) =>
     : 'text-gray-600 hover:text-green-700 hover:bg-gray-50'}`;
 
 function Navbar() {
-  const { signOut } = useAuth();
-  const navigate = useNavigate();
   const { t } = useI18n();
   const { signedIn, canScan, items } = useNavItems();
-
-  const logout = async () => { await signOut(); navigate('/'); };
+  const logout = useLogout();
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-100 pt-[env(safe-area-inset-top)]">
       <nav aria-label={t('Main')} className="max-w-6xl mx-auto flex items-center justify-between gap-2 sm:gap-4 px-4 h-16">
-        <Link to="/" aria-label={t('{brand} home', { brand: BRAND_NAME })} className="rounded-lg flex-shrink-0">
-          <Logo size={32} />
-        </Link>
+        <div className="flex items-center gap-1 min-w-0">
+          <BackButton />
+          <Link to="/" aria-label={t('{brand} home', { brand: BRAND_NAME })} className="rounded-lg flex-shrink-0">
+            <Logo size={32} />
+          </Link>
+        </div>
 
         <ul className="hidden md:flex items-center gap-1">
           {items.map((it) => (

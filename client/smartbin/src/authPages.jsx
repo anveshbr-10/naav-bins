@@ -1,3 +1,5 @@
+import { BackButton } from './nav';
+import { useLogout } from './logout';
 import React, { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Loader2, MailCheck, KeyRound, AlertTriangle, RefreshCw, LogOut } from 'lucide-react';
@@ -21,6 +23,7 @@ function AuthCard({ icon, title, children }) {
   const { t } = useI18n();
   return (
     <div className="min-h-dvh flex items-center justify-center bg-[#0d2a1a] p-4 sm:p-5 relative">
+      <div className="absolute top-4 left-4"><BackButton tone="light" /></div>
       <div className="absolute top-4 right-4"><LanguageSwitcher tone="light" /></div>
       <main className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 sm:p-8">
         <Link to="/" aria-label={t('{brand} home', { brand: BRAND_NAME })} className="inline-flex mb-6 rounded-lg">
@@ -46,7 +49,8 @@ export function FullPageLoader({ message = tk('Loading…') }) {
 
 // Shown when the user is signed in but their account details could not be loaded.
 export function ProfileLoadError() {
-  const { reloadProfile, signOut } = useAuth();
+  const { reloadProfile } = useAuth();
+  const signOut = useLogout();
   const { t } = useI18n();
   return (
     <AuthCard icon={<AlertTriangle />} title={t('Could not load your account')}>

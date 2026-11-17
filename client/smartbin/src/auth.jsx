@@ -1,3 +1,4 @@
+import { BackButton } from './nav';
 import React, { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
@@ -331,7 +332,7 @@ const styles = `
   .transparent-btn:hover { background: rgba(255,255,255,0.18); transform: translateY(-2px); }
 
   .auth-home {
-    position: absolute; top: 20px; left: 20px; z-index: 20;
+    position: absolute; top: 20px; left: 60px; z-index: 20;
     border-radius: 12px; text-decoration: none;
   }
 
@@ -558,6 +559,7 @@ function Auth({ initialPanel = 'login' }) {
     <>
       <style>{styles}</style>
       <div className="auth-page">
+        <div style={{ position: 'absolute', top: 20, left: 12, zIndex: 20 }}><BackButton tone="light" /></div>
         <Link to="/" className="auth-home" aria-label={t('{brand} home', { brand: BRAND_NAME })}>
           <Logo size={34} tone="light" />
         </Link>
