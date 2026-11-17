@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import api, { apiErrorMessage } from './api';
 import { Loader2, ArrowLeft } from 'lucide-react';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
@@ -386,7 +386,7 @@ function Auth({ initialPanel = 'login' }) {
     e.preventDefault();
     setLoginLoading(true);
     try {
-      const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/login', {
+      const res = await api.post('/api/login', {
         email: loginEmail,
         password: loginPassword,
       });
@@ -398,8 +398,10 @@ function Auth({ initialPanel = 'login' }) {
         alert('Invalid Credentials. Please try again.');
         setLoginLoading(false);
       }
-    } catch {
-      alert('Server connection error.');
+    } catch (err) {
+      alert(err?.response?.status === 401
+        ? 'Invalid Credentials. Please try again.'
+        : apiErrorMessage(err, 'Login failed. Please try again.'));
       setLoginLoading(false);
     }
   }
@@ -409,7 +411,7 @@ function Auth({ initialPanel = 'login' }) {
     e.preventDefault();
     setRegLoading(true);
     try {
-      const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/register', {
+      const res = await api.post('/api/register', {
         name: regName,
         email: regEmail,
         password: regPassword,
@@ -422,8 +424,8 @@ function Auth({ initialPanel = 'login' }) {
         alert('Error: ' + (res.data.error || 'Email might already be in use.'));
         setRegLoading(false);
       }
-    } catch {
-      alert('Server connection failed.');
+    } catch (err) {
+      alert('Error: ' + apiErrorMessage(err, 'Registration failed. Please try again.'));
       setRegLoading(false);
     }
   }
@@ -477,7 +479,9 @@ function Auth({ initialPanel = 'login' }) {
               <input
                 required type="password"
                 className="auth-input"
-                placeholder="Password"
+                placeholder="Password (min 8 characters)"
+                minLength={8}
+                maxLength={72}
                 value={regPassword}
                 onChange={(e) => setRegPassword(e.target.value)}
                 disabled={regLoading}

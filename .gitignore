@@ -54,3 +54,6 @@ build/
 .venv/
 __pycache__/
 *.pyc
+
+# Generated printable bin QR sheet
+server/bin-qr-codes.html

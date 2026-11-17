@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import api, { apiStatus, logout } from './api';
 import { Users, Search, Wallet, Leaf, ArrowUpRight, Download, LogOut, ShieldCheck } from 'lucide-react';
 
 export default function Admin() {
@@ -15,8 +15,8 @@ export default function Admin() {
 
     const fetchUsers = async () => {
         try {
-            const res = await axios.get('https://smartbin-api-c7g4.onrender.com/api/admin/users');
-            const data = res.data.users;
+            const res = await api.get('/api/admin/users');
+            const data = res.data.users || [];
             setUsers(data);
 
             // Calculate Aggregate Stats for the top cards
@@ -29,6 +29,9 @@ export default function Admin() {
                 totalPoints
             });
         } catch (err) {
+            const status = apiStatus(err);
+            if (status === 401) { logout(); navigate('/login'); return; }
+            if (status === 403) { navigate('/dashboard'); return; }
             console.error("Error fetching users");
         }
     };
@@ -54,7 +57,7 @@ export default function Admin() {
                     </div>
                 </div>
                 <button
-                    onClick={() => navigate('/')}
+                    onClick={() => { logout(); navigate('/'); }}
                     className="flex items-center gap-2 text-slate-500 hover:text-red-600 transition font-medium"
                 >
                     <LogOut size={18} /> Logout

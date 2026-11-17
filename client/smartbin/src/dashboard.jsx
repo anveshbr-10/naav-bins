@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import api, { apiErrorMessage, logout } from './api';
 import { Wallet, Leaf, Trash2, LogOut, History, Ticket, Bus, Train, Trophy, MapPin } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
@@ -20,7 +20,7 @@ export default function Dashboard() {
   const fetchUserData = () => {
     const token = localStorage.getItem('token');
     if (!token) { navigate('/login'); return; }
-    axios.get('https://smartbin-api-c7g4.onrender.com/api/dashboard', { headers: { 'x-access-token': token } })
+    api.get('/api/dashboard')
       .then(res => {
         if (res.data.status === 'ok') setUser(res.data.user);
         else { localStorage.removeItem('token'); navigate('/login'); }
@@ -34,11 +34,14 @@ export default function Dashboard() {
 
   const handleRedeem = async (item, cost, type) => {
     if (!window.confirm(`Are you sure you want to redeem ${item} for ${cost} ${type === 'money' ? 'Rupees' : 'Points'}?`)) return;
-    const res = await axios.post('https://smartbin-api-c7g4.onrender.com/api/redeem', { item, cost, type }, {
-      headers: { 'x-access-token': localStorage.getItem('token') }
-    });
-    if (res.data.status === 'ok') { alert(`Success! You redeemed: ${item}`); fetchUserData(); }
-    else alert(`Failed: ${res.data.message}`);
+    try {
+      // Only the item is sent — the server decides the cost and currency.
+      const res = await api.post('/api/redeem', { item });
+      if (res.data.status === 'ok') { alert(`Success! You redeemed: ${item}`); fetchUserData(); }
+      else alert(`Failed: ${res.data.message}`);
+    } catch (err) {
+      alert(`Failed: ${apiErrorMessage(err, 'Could not redeem. Please try again.')}`);
+    }
   };
 
   const processEarningsData = () => {
@@ -84,7 +87,7 @@ export default function Dashboard() {
             <Trophy size={20} /> <span className="hidden sm:inline">Leaderboard</span>
           </button>
           <button
-            onClick={() => { localStorage.removeItem('token'); navigate('/'); }}
+            onClick={() => { logout(); navigate('/'); }}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-50 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-100 transition"
           >
             <LogOut size={20} /> <span className="hidden sm:inline">Logout</span>

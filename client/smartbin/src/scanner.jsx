@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import * as tmImage from '@teachablemachine/image';
 import Webcam from 'react-webcam';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import api, { apiErrorMessage, apiStatus } from './api';
 import { Loader2, ScanQrCode, Camera, CheckCircle2 } from 'lucide-react';
 
 const WASTE_CONFIG = {
@@ -22,6 +22,9 @@ export default function Scanner() {
   const [borderColor, setBorderColor] = useState("border-gray-500");
   const [isProcessing, setIsProcessing] = useState(false);
   const [qrError, setQrError] = useState(null);
+  const [scanAttempt, setScanAttempt] = useState(0); // bump to restart the QR camera
+  const [scanToken, setScanToken] = useState(null);  // short-lived, single-use proof of a verified bin scan
+  const [needsRescan, setNeedsRescan] = useState(false);
 
   const webcamRef = useRef(null);
   const scannerRef = useRef(null);
@@ -43,13 +46,34 @@ export default function Scanner() {
       const html5QrCode = new Html5Qrcode("reader");
       scannerRef.current = html5QrCode;
       const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      let handled = false;
+
+      // The server checks the QR signature and bin status, then issues a scan session.
+      const verifyBin = async (decodedText) => {
+        try {
+          const res = await api.post('/api/scan/start', { qr: decodedText });
+          setScanToken(res.data.scanToken);
+          if (res.data.bin?.name) setCurrentLocation(res.data.bin.name);
+          setNeedsRescan(false);
+          setStep(2);
+        } catch (err) {
+          if (apiStatus(err) === 401) { navigate('/login'); return; }
+          setQrError(apiErrorMessage(err, "Could not verify this bin. Please try again."));
+        }
+      };
 
       html5QrCode.start(
         { facingMode: "environment" },
         config,
         (decodedText) => {
-          console.log("QR Code detected:", decodedText);
-          html5QrCode.stop().then(() => setStep(2));
+          if (handled) return;
+          handled = true;
+          html5QrCode.stop()
+            .catch(() => {})
+            .then(() => {
+              try { html5QrCode.clear(); } catch { /* already cleared */ }
+              return verifyBin(decodedText);
+            });
         },
         () => {}
       ).catch(err => {
@@ -63,7 +87,18 @@ export default function Scanner() {
         }
       };
     }
-  }, [step]);
+  }, [step, scanAttempt, navigate]);
+
+  const rescan = () => {
+    setQrError(null);
+    setScanToken(null);
+    setDetectedWaste(null);
+    setNeedsRescan(false);
+    setIsProcessing(false);
+    setStatus("Waiting for waste...");
+    setStep(1);
+    setScanAttempt(n => n + 1);
+  };
 
   // --- STEP 2: AI CAPTURE ---
   const capture = async () => {
@@ -84,34 +119,35 @@ export default function Scanner() {
         const prediction = await model.predict(img);
         const best = prediction.sort((a, b) => b.probability - a.probability)[0];
 
-        if (best.probability > 0.80) {
-          const config = WASTE_CONFIG[best.className] || {
-            label: best.className,
-            emoji: "♻️",
-            hex: "#6B7280",
-            incentive: 5,
-            bin: "General Bin",
-          };
+        const config = Object.prototype.hasOwnProperty.call(WASTE_CONFIG, best.className)
+          ? WASTE_CONFIG[best.className]
+          : null;
+
+        if (best.probability > 0.80 && config) {
+          // Reward is recorded (and decided) by the server first; the result card only shows once it is confirmed.
+          try {
+            await api.post('/api/add-waste', { wasteType: config.label, scanToken });
+            localStorage.removeItem('current_bin_location');
+          } catch (err) {
+            const code = apiStatus(err);
+            if (code === 401) { navigate('/login'); return; }
+            setStatus(`❌ ${apiErrorMessage(err, "Could not record this item. Please try again.")}`);
+            setBorderColor("border-red-500");
+            if (code === 403 || code === 409) setNeedsRescan(true); // scan session used/expired
+            setIsProcessing(false);
+            return;
+          }
 
           setDetectedWaste(config);
           setBorderColor(`border-[${config.hex}]`);
           setStatus("identified");
 
-          setTimeout(async () => {
-            try {
-              await axios.post('https://smartbin-api-c7g4.onrender.com/api/add-waste', {
-                wasteType: config.label,
-                location: currentLocation
-              }, {
-                headers: { 'x-access-token': localStorage.getItem('token') }
-              });
-              localStorage.removeItem('current_bin_location');
-            } catch (e) {
-              console.error("Submit failed", e);
-            }
-            navigate('/dashboard');
-          }, 3000);
+          setTimeout(() => navigate('/dashboard'), 3000);
 
+        } else if (best.probability > 0.80) {
+          setStatus("❌ Not a recognised waste type. Try another angle.");
+          setBorderColor("border-red-500");
+          setIsProcessing(false);
         } else {
           setStatus("❌ Not clear. Hold the item closer.");
           setBorderColor("border-red-500");
@@ -176,7 +212,15 @@ export default function Scanner() {
               <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500 shadow-[0_0_20px_#10b981] animate-scan-down pointer-events-none z-10"></div>
             </div>
             {qrError ? (
-              <p className="text-red-400 text-xs mt-4 font-bold">{qrError}</p>
+              <div className="mt-4">
+                <p className="text-red-400 text-xs font-bold">{qrError}</p>
+                <button
+                  onClick={rescan}
+                  className="mt-3 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-bold hover:bg-slate-700"
+                >
+                  Try again
+                </button>
+              </div>
             ) : (
               <p className="text-xs text-slate-500 mt-4 flex items-center justify-center gap-1">
                 <Camera size={14} /> Auto-scanning active
@@ -271,8 +315,18 @@ export default function Scanner() {
             </div>
           )}
 
+          {/* Re-scan prompt when the bin session is used up or expired */}
+          {!detectedWaste && needsRescan && (
+            <button
+              onClick={rescan}
+              className="mt-6 w-full py-4 rounded-xl text-lg font-bold bg-slate-800 text-white flex items-center justify-center gap-3 hover:bg-slate-700"
+            >
+              <ScanQrCode /> Scan Bin QR Again
+            </button>
+          )}
+
           {/* Capture button */}
-          {!detectedWaste && (
+          {!detectedWaste && !needsRescan && (
             <button
               onClick={capture}
               disabled={isProcessing}

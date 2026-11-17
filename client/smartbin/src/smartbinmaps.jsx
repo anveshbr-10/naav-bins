@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react'; // Make sure you have this imported
-import axios from 'axios';
+import api from './api';
 
 // --- FIX ICONS (Native Leaflet requires manual icon setup) ---
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -33,7 +33,7 @@ export default function SmartBinMap() {
 
             try {
                 // 1. FETCH REAL-TIME DATA FROM YOUR LIVE RENDER SERVER
-                const res = await axios.get('https://smartbin-api-c7g4.onrender.com/api/bins');
+                const res = await api.get('/api/bins');
                 if (res.data.status === 'ok') {
                     activeBins = res.data.bins;
                 }
@@ -64,21 +64,27 @@ export default function SmartBinMap() {
                         ? "background-color: #059669; color: white; cursor: pointer;"
                         : "background-color: #9ca3af; color: white; cursor: not-allowed; opacity: 0.8;";
 
+                    // Built with DOM APIs + textContent so database values are never parsed as HTML (prevents XSS).
                     const popupContent = document.createElement('div');
-                    popupContent.innerHTML = `
-                    <div style="text-align: center; font-family: sans-serif;">
-                        <h3 style="margin: 0; font-weight: bold; font-size: 16px;">${bin.name}</h3>
-                        <span style="background-color: ${statusColor}; color: white; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: bold;">
-                            ${bin.status}
-                        </span>
-                        <br/>
-                        <button id="scan-btn-${bin.id}" style="margin-top: 8px; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; ${buttonStyle}">
-                            Scan Here
-                        </button>
-                    </div>
-                `;
+                    popupContent.style.cssText = "text-align: center; font-family: sans-serif;";
 
-                    popupContent.querySelector(`#scan-btn-${bin.id}`).addEventListener('click', () => {
+                    const title = document.createElement('h3');
+                    title.style.cssText = "margin: 0; font-weight: bold; font-size: 16px;";
+                    title.textContent = String(bin.name ?? '');
+
+                    const badge = document.createElement('span');
+                    badge.style.cssText = "color: white; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: bold;";
+                    badge.style.backgroundColor = statusColor;
+                    badge.textContent = String(bin.status ?? '');
+
+                    const scanButton = document.createElement('button');
+                    scanButton.type = 'button';
+                    scanButton.style.cssText = `margin-top: 8px; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; ${buttonStyle}`;
+                    scanButton.textContent = 'Scan Here';
+
+                    popupContent.append(title, badge, document.createElement('br'), scanButton);
+
+                    scanButton.addEventListener('click', () => {
                         if (!isActive) {
                             alert(`Sorry, the ${bin.name} is currently ${bin.status}. Please find an active bin!`);
                             return;
