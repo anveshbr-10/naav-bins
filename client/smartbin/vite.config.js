@@ -22,9 +22,31 @@ function stampServiceWorker() {
   }
 }
 
+// Dev server: whenever a source file is saved, re-extract UI strings and keep the Kannada / Hindi
+// dictionaries in step (machine-translating new strings when a translation API key is configured).
+function i18nAutoSync() {
+  let timer = null
+  return {
+    name: 'naav-i18n-sync',
+    apply: 'serve',
+    handleHotUpdate({ file }) {
+      if (!/[\\/]src[\\/].*\.(jsx?|mjs)$/.test(file) || /[\\/]locales[\\/]/.test(file)) return
+      clearTimeout(timer)
+      timer = setTimeout(async () => {
+        try {
+          const { sync } = await import('./scripts/i18n-sync.mjs')
+          await sync({ quiet: true, log: (m) => console.log(`[i18n] ${m}`) })
+        } catch (err) {
+          console.warn('[i18n] sync failed:', err.message)
+        }
+      }, 800)
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), stampServiceWorker()],
+  plugins: [react(), stampServiceWorker(), i18nAutoSync()],
   build: {
     // The AI runtime (TensorFlow.js, ~1.2 MB) is one indivisible library. It is only downloaded
     // when the scanner opens, so it is allowed past the default 500 kB warning.

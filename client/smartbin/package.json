@@ -4,11 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/i18n-sync.mjs --quiet",
     "dev": "vite",
+    "prebuild": "node scripts/i18n-sync.mjs --quiet",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test"
+    "test": "node --test",
+    "i18n": "node scripts/i18n-sync.mjs",
+    "i18n:check": "node scripts/i18n-sync.mjs --check"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
@@ -17,6 +21,7 @@
     "html5-qrcode": "^2.3.8",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.554.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.6",

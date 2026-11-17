@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, LocateFixed, Navigation, RefreshCw, ChevronDown, ChevronUp, MapPinOff, WifiOff } from 'lucide-react';
 import api from './api';
 import AppShell from './layout';
+import { useI18n, tk, translate } from './i18n';
+import { STREAMS, streamOf } from './waste';
 
 // Only used until bins load; afterwards the map fits to wherever the bins actually are.
 const FALLBACK_CENTER = [12.9637, 77.5058];
@@ -13,10 +15,14 @@ const NEARBY_FIT_LIMIT_M = 3000;
 const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 };
 
 const STATUS = {
-    Active:   { color: '#10b981', label: 'Active', order: 0 },
-    Full:     { color: '#ef4444', label: 'Full', order: 1 },
-    Inactive: { color: '#9ca3af', label: 'Inactive', order: 2 },
+    Active:   { color: '#10b981', label: tk('Active'), order: 0 },
+    Full:     { color: '#ef4444', label: tk('Full'), order: 1 },
+    Inactive: { color: '#9ca3af', label: tk('Inactive'), order: 2 },
 };
+const STREAM_FILTERS = ['all', 'dry', 'wet', 'reject'];
+// A bin can take a stream if it is a single-stream bin of that stream or a sorting station.
+const takes = (bin, stream) => stream === 'all' || bin.stream === stream || bin.stream === 'station';
+const fillColor = (f) => (f >= 80 ? '#ef4444' : f >= 50 ? '#f59e0b' : '#10b981');
 const statusInfo = (s) => STATUS[s] || { color: '#9ca3af', label: String(s || 'Unknown'), order: 3 };
 
 function distanceMeters(a, b) {
@@ -46,6 +52,8 @@ function el(tag, css, text) {
 
 export default function BinMap() {
     const navigate = useNavigate();
+    const { t } = useI18n();
+    const [streamFilter, setStreamFilter] = useState('all');
 
     const mapContainerRef = useRef(null);
     const mapRef = useRef(null);
@@ -115,30 +123,35 @@ export default function BinMap() {
     const buildPopup = useCallback((bin) => {
         const info = statusInfo(bin.status);
         const isActive = bin.status === 'Active';
-        const root = el('div', 'text-align:center;font-family:sans-serif;min-width:180px');
+        const stream = streamOf(bin.stream);
+        const root = el('div', 'text-align:center;font-family:inherit;min-width:190px');
         root.append(
             el('h3', 'margin:0 0 6px;font-weight:bold;font-size:16px', bin.name),
-            el('span', `background:${info.color};color:#fff;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:bold`, info.label),
+            el('span', `background:${info.color};color:#fff;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:bold`, translate(info.label)),
+            el('div', `margin-top:6px;font-size:12px;font-weight:bold;color:${stream.color}`, `${translate(stream.label)} · ${translate(stream.bin)}`),
         );
+        if (Number.isFinite(bin.fill)) {
+            root.append(el('div', 'margin-top:4px;font-size:12px;color:#475569', translate(tk('{n}% full'), { n: bin.fill })));
+        }
         if (userPosRef.current) {
-            root.append(el('div', 'margin-top:6px;font-size:12px;color:#475569', `${formatDistance(distanceMeters(userPosRef.current, bin))} away`));
+            root.append(el('div', 'margin-top:4px;font-size:12px;color:#475569', translate(tk('{d} away'), { d: formatDistance(distanceMeters(userPosRef.current, bin)) })));
         }
 
         const actions = el('div', 'margin-top:10px;display:flex;gap:6px;justify-content:center');
         const scan = el('button', `border:none;padding:6px 12px;border-radius:6px;font-weight:bold;color:#fff;${isActive
-            ? 'background:#059669;cursor:pointer' : 'background:#9ca3af;cursor:not-allowed;opacity:.8'}`, 'Scan Here');
+            ? 'background:#059669;cursor:pointer' : 'background:#9ca3af;cursor:not-allowed;opacity:.8'}`, translate(tk('Scan here')));
         scan.type = 'button';
         scan.disabled = !isActive;
         scan.addEventListener('click', () => goScan(bin));
 
-        const dir = el('a', 'padding:6px 12px;border-radius:6px;font-weight:bold;background:#e2e8f0;color:#0f172a;text-decoration:none', 'Directions');
+        const dir = el('a', 'padding:6px 12px;border-radius:6px;font-weight:bold;background:#e2e8f0;color:#0f172a;text-decoration:none', translate(tk('Directions')));
         dir.href = directionsUrl(bin);
         dir.target = '_blank';
         dir.rel = 'noopener noreferrer';
 
         actions.append(scan, dir);
         root.append(actions);
-        if (!isActive) root.append(el('div', 'margin-top:6px;font-size:11px;color:#64748b', 'This bin is not accepting items right now.'));
+        if (!isActive) root.append(el('div', 'margin-top:6px;font-size:11px;color:#64748b', translate(tk('This bin is not accepting items right now.'))));
         return root;
     }, [goScan]);
 
@@ -192,8 +205,10 @@ export default function BinMap() {
         layer.clearLayers();
         markersRef.current.clear();
         for (const bin of bins) {
+            if (!takes(bin, streamFilter)) continue;
+            // Fill = open/full status; ring = BBMP stream colour.
             const marker = L.circleMarker([bin.lat, bin.lng], {
-                radius: 11, color: '#ffffff', weight: 3, fillColor: statusInfo(bin.status).color, fillOpacity: 1,
+                radius: 11, color: streamOf(bin.stream).color, weight: 4, fillColor: statusInfo(bin.status).color, fillOpacity: 1,
             }).bindPopup(() => buildPopup(bin));
             layer.addLayer(marker);
             markersRef.current.set(bin.id, marker);
@@ -203,7 +218,8 @@ export default function BinMap() {
             map.fitBounds(L.latLngBounds(bins.map(b => [b.lat, b.lng])).pad(0.25), { maxZoom: 18 });
             fittedRef.current = true;
         }
-    }, [bins, buildPopup]);
+    // `t` is a dependency so popups are rebuilt in a newly chosen language.
+    }, [bins, buildPopup, streamFilter, t]);
 
     // ---------- User marker ----------
     useEffect(() => {
@@ -238,21 +254,22 @@ export default function BinMap() {
 
     // ---------- Derived list ----------
     const sortedBins = useMemo(() => bins
+        .filter(b => takes(b, streamFilter))
         .map(b => ({ ...b, distance: userPos ? distanceMeters(userPos, b) : null }))
         .sort((a, b) => {
             if (a.distance !== null && b.distance !== null) return a.distance - b.distance;
             return statusInfo(a.status).order - statusInfo(b.status).order || String(a.name).localeCompare(String(b.name));
-        }), [bins, userPos]);
+        }), [bins, userPos, streamFilter]);
 
     const activeCount = bins.filter(b => b.status === 'Active').length;
     const nearestActiveId = userPos ? sortedBins.find(b => b.status === 'Active')?.id : undefined;
 
-    const geoMessage = {
-        locating: 'Finding your location…',
-        ok: 'Sorted by distance from you',
-        denied: 'Location is blocked. Allow it in your browser to sort bins by distance.',
-        unavailable: 'Location unavailable. Bins are sorted by status.',
-    }[geoState];
+    const geoMessage = t({
+        locating: tk('Finding your location…'),
+        ok: tk('Sorted by distance from you'),
+        denied: tk('Location is blocked. Allow it in your browser to sort bins by distance.'),
+        unavailable: tk('Location unavailable. Bins are sorted by status.'),
+    }[geoState]);
 
     return (
         <AppShell fullHeight>
@@ -262,11 +279,11 @@ export default function BinMap() {
             <div className="flex items-center justify-between gap-3 bg-white px-4 py-3 border-b border-slate-200">
                 <div className="flex items-center gap-3 min-w-0">
                     <div className="min-w-0">
-                        <h1 className="text-lg font-bold text-slate-800 truncate">Bin map</h1>
+                        <h1 className="text-lg font-bold text-slate-800 truncate">{t('Bin map')}</h1>
                         <p className="text-xs text-slate-500 truncate" aria-live="polite">
                             {loadState === 'ready' || bins.length
-                                ? `${bins.length} bins · ${activeCount} accepting items`
-                                : 'Loading bins…'}
+                                ? t('{n} bins · {active} accepting items', { n: bins.length, active: activeCount })
+                                : t('Loading bins…')}
                         </p>
                     </div>
                 </div>
@@ -274,7 +291,7 @@ export default function BinMap() {
                     <button
                         onClick={refresh}
                         disabled={refreshing}
-                        aria-label="Refresh bin status"
+                        aria-label={t('Refresh bin status')}
                         className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-50"
                     >
                         <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
@@ -284,7 +301,7 @@ export default function BinMap() {
                         className="flex items-center gap-2 px-3 py-2 rounded-full bg-blue-600 text-white text-sm font-bold hover:bg-blue-700"
                     >
                         {geoState === 'locating' ? <Loader2 size={18} className="animate-spin" /> : <LocateFixed size={18} />}
-                        <span className="hidden sm:inline">My location</span>
+                        <span className="hidden sm:inline">{t('My location')}</span>
                     </button>
                 </div>
             </div>
@@ -298,15 +315,29 @@ export default function BinMap() {
                         className="flex items-center justify-between px-4 py-3 font-bold text-slate-700 md:pointer-events-none"
                         aria-expanded={panelOpen}
                     >
-                        Nearby bins
+                        {t('Nearby bins')}
                         <span className="md:hidden">{panelOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}</span>
                     </button>
 
                     <div className={`${panelOpen ? 'flex' : 'hidden'} md:flex flex-col min-h-0 flex-1`}>
+                        <div className="px-4 pb-2 flex gap-1.5 flex-wrap" role="group" aria-label={t('Waste stream')}>
+                            {STREAM_FILTERS.map(f => (
+                                <button
+                                    key={f}
+                                    onClick={() => setStreamFilter(f)}
+                                    aria-pressed={streamFilter === f}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-bold border transition ${streamFilter === f ? 'text-white border-transparent' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                    style={streamFilter === f ? { background: f === 'all' ? '#0f766e' : STREAMS[f].color } : undefined}
+                                >
+                                    {f === 'all' ? t('All bins') : t(STREAMS[f].label)}
+                                </button>
+                            ))}
+                        </div>
                         <p className="px-4 pb-2 text-xs text-slate-500">{geoMessage}</p>
                         <ul className="overflow-y-auto flex-1 min-h-0 border-t border-slate-100">
                             {sortedBins.map(bin => {
                                 const info = statusInfo(bin.status);
+                                const stream = streamOf(bin.stream);
                                 return (
                                     <li key={bin.id} className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 hover:bg-slate-50">
                                         <button onClick={() => focusBin(bin)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
@@ -314,17 +345,26 @@ export default function BinMap() {
                                             <span className="min-w-0">
                                                 <span className="block font-semibold text-slate-800 truncate">{bin.name}</span>
                                                 <span className="block text-xs text-slate-500">
-                                                    {info.label}
+                                                    {t(info.label)}
+                                                    <span style={{ color: stream.color }} className="font-semibold"> · {t(stream.label)}</span>
                                                     {bin.distance !== null && ` · ${formatDistance(bin.distance)}`}
-                                                    {bin.id === nearestActiveId && <span className="text-emerald-600 font-bold"> · Nearest</span>}
+                                                    {bin.id === nearestActiveId && <span className="text-emerald-600 font-bold"> · {t('Nearest')}</span>}
                                                 </span>
+                                                {Number.isFinite(bin.fill) && (
+                                                    <span className="mt-1 flex items-center gap-2">
+                                                        <span className="h-1.5 w-20 bg-slate-100 rounded-full overflow-hidden" aria-hidden="true">
+                                                            <span className="block h-full rounded-full" style={{ width: `${bin.fill}%`, background: fillColor(bin.fill) }} />
+                                                        </span>
+                                                        <span className="text-[11px] text-slate-500">{t('{n}% full', { n: bin.fill })}</span>
+                                                    </span>
+                                                )}
                                             </span>
                                         </button>
                                         <a
                                             href={directionsUrl(bin)}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            aria-label={`Directions to ${bin.name}`}
+                                            aria-label={t('Directions to {bin}', { bin: bin.name })}
                                             className="p-2 rounded-lg text-slate-500 hover:bg-slate-100"
                                         >
                                             <Navigation size={18} />
@@ -334,24 +374,24 @@ export default function BinMap() {
                                                 onClick={() => goScan(bin)}
                                                 className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
                                             >
-                                                Scan
+                                                {t('Scan')}
                                             </button>
                                         )}
                                     </li>
                                 );
                             })}
-                            {loadState === 'ready' && bins.length === 0 && (
-                                <li className="px-4 py-6 text-center text-sm text-slate-400">No bins registered yet.</li>
+                            {loadState === 'ready' && sortedBins.length === 0 && (
+                                <li className="px-4 py-6 text-center text-sm text-slate-400">{bins.length ? t('No bins for this stream.') : t('No bins registered yet.')}</li>
                             )}
                         </ul>
                         <div className="flex items-center gap-4 px-4 py-2 text-xs text-slate-500 border-t border-slate-100">
                             {['Active', 'Full', 'Inactive'].map(s => (
                                 <span key={s} className="flex items-center gap-1">
-                                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: STATUS[s].color }} /> {s}
+                                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: STATUS[s].color }} /> {t(STATUS[s].label)}
                                 </span>
                             ))}
                             <span className="flex items-center gap-1">
-                                <span className="w-2.5 h-2.5 rounded-full bg-blue-600" /> You
+                                <span className="w-2.5 h-2.5 rounded-full bg-blue-600" /> {t('You')}
                             </span>
                         </div>
                     </div>
@@ -359,13 +399,13 @@ export default function BinMap() {
 
                 {/* MAP */}
                 <div className="relative flex-1 min-h-0">
-                    <div ref={mapContainerRef} className="absolute inset-0 z-0" role="region" aria-label="Map of smart bins" />
+                    <div ref={mapContainerRef} className="absolute inset-0 z-0" role="region" aria-label={t('Map of smart bins')} />
 
                     {loadState === 'loading' && !bins.length && (
                         <div role="status" className="absolute inset-0 z-[1000] flex flex-col items-center justify-center bg-slate-900/70 backdrop-blur-sm text-white">
                             <Loader2 className="animate-spin w-12 h-12 text-emerald-400 mb-4" />
-                            <p className="text-lg font-bold tracking-wide">Loading bins…</p>
-                            <p className="text-xs text-slate-300 mt-1">The server may take up to 30 seconds to wake up.</p>
+                            <p className="text-lg font-bold tracking-wide">{t('Loading bins…')}</p>
+                            <p className="text-xs text-slate-300 mt-1">{t('The server may take up to 30 seconds to wake up.')}</p>
                         </div>
                     )}
 
@@ -373,10 +413,10 @@ export default function BinMap() {
                         <div className="absolute inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4">
                             <div className="bg-white rounded-2xl p-6 text-center max-w-sm shadow-xl">
                                 <WifiOff className="mx-auto text-slate-400 mb-3" size={36} />
-                                <p className="font-bold text-slate-800">Could not load bins</p>
-                                <p className="text-sm text-slate-500 mt-1">Check your connection and try again.</p>
+                                <p className="font-bold text-slate-800">{t('Could not load bins')}</p>
+                                <p className="text-sm text-slate-500 mt-1">{t('Check your connection and try again.')}</p>
                                 <button onClick={refresh} className="mt-4 inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-emerald-700">
-                                    <RefreshCw size={16} /> Try again
+                                    <RefreshCw size={16} /> {t('Try again')}
                                 </button>
                             </div>
                         </div>
@@ -384,7 +424,7 @@ export default function BinMap() {
 
                     {loadState === 'error' && bins.length > 0 && (
                         <div className="absolute top-3 left-3 right-16 z-[1000] bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-xl px-4 py-2 shadow">
-                            Couldn't refresh bin status. Showing the last known status.
+                            {t("Couldn't refresh bin status. Showing the last known status.")}
                         </div>
                     )}
 
@@ -392,8 +432,8 @@ export default function BinMap() {
                         <div className="absolute inset-0 z-[1000] flex items-center justify-center p-4 pointer-events-none">
                             <div className="bg-white rounded-2xl p-6 text-center max-w-sm shadow-xl">
                                 <MapPinOff className="mx-auto text-slate-400 mb-3" size={36} />
-                                <p className="font-bold text-slate-800">No smart bins yet</p>
-                                <p className="text-sm text-slate-500 mt-1">Bins will appear here once they are registered.</p>
+                                <p className="font-bold text-slate-800">{t('No smart bins yet')}</p>
+                                <p className="text-sm text-slate-500 mt-1">{t('Bins will appear here once they are registered.')}</p>
                             </div>
                         </div>
                     )}

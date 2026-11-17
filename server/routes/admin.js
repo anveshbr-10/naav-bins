@@ -1,0 +1,384 @@
+// Operations console (admins) and voucher counter (admins + canteen/store vendors).
+
+const { computeImpact, planRedemptionStatusChange, ADMIN_STATUSES, BIN_STREAMS } = require('../lib/rewards');
+const { summarizeFleet, planCollectionRoute } = require('../lib/operations');
+const { deriveDeviceKey } = require('../lib/binQr');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BIN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const CODE_RE = /^(NB-[A-Z0-9]{4}-[A-Z0-9]{4}|LEGACY-[A-Z0-9]{8})$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const num = (v, { min = -Infinity, max = Infinity } = {}) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= min && n <= max ? n : NaN;
+};
+
+module.exports = function adminRoutes(ctx) {
+    const { app, supabase, store, config, fail, str, verifyToken, loadProfile, requireAdmin, requireCounter, limiters, caches } = ctx;
+    const admin = [verifyToken, loadProfile, requireAdmin];
+    const adminWrite = [...admin, limiters.write];
+
+    // ---------------- overview ----------------
+    app.get('/api/admin/overview', ...admin, async (req, res) => {
+        const [profiles, material, redemptions, flags, tables] = await Promise.all([
+            supabase.from('user_profiles').select('role, walletBalance, ecoPoints, is_blocked'),
+            supabase.from('naav_user_material_stats').select('waste_type, items, weight_kg, measured_items, reward_inr'),
+            supabase.from('redemptions').select('type, cost, status'),
+            supabase.from('fraud_flags').select('severity').is('resolved_at', null),
+            store.loadRewardTables(),
+        ]);
+        for (const r of [profiles, material, redemptions, flags]) if (r.error) throw r.error;
+        const impact = computeImpact(material.data, tables.rules);
+        const sum = (rows, pred) => rows.filter(pred).reduce((s, r) => s + (Number(r.cost) || 0), 0);
+        res.json({
+            status: 'ok',
+            users: profiles.data.filter(p => p.role === 'user').length,
+            admins: profiles.data.filter(p => p.role === 'admin').length,
+            vendors: profiles.data.filter(p => p.role === 'vendor').length,
+            blocked: profiles.data.filter(p => p.is_blocked).length,
+            walletTotal: profiles.data.reduce((s, p) => s + (Number(p.walletBalance) || 0), 0),
+            rewardsIssued: material.data.reduce((s, r) => s + (Number(r.reward_inr) || 0), 0),
+            paidOut: sum(redemptions.data, r => r.type === 'money' && r.status === 'Paid'),
+            pendingAmount: sum(redemptions.data, r => r.type === 'money' && r.status === 'Pending'),
+            pendingCount: redemptions.data.filter(r => r.type === 'money' && r.status === 'Pending').length,
+            openVouchers: redemptions.data.filter(r => r.type === 'points' && r.status === 'Issued').length,
+            openFlags: flags.data.length,
+            highFlags: flags.data.filter(f => f.severity === 'high').length,
+            ...impact,
+        });
+    });
+
+    // ---------------- users ----------------
+    app.get('/api/admin/users', ...admin, async (req, res) => {
+        const [users, material, open, flags, tables] = await Promise.all([
+            supabase.from('user_profiles')
+                .select('id, email, name, role, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt')
+                .order('createdAt', { ascending: true }),
+            supabase.from('naav_user_material_stats').select('user_id, waste_type, items, weight_kg, measured_items, reward_inr'),
+            supabase.from('redemptions').select('user_id, cost').eq('type', 'money').eq('status', 'Pending'),
+            supabase.from('fraud_flags').select('user_id').is('resolved_at', null),
+            store.loadRewardTables(),
+        ]);
+        for (const r of [users, material, open, flags]) if (r.error) throw r.error;
+        const group = (rows, key) => rows.reduce((m, r) => m.set(r[key], [...(m.get(r[key]) || []), r]), new Map());
+        const byUser = group(material.data, 'user_id');
+        const pending = group(open.data, 'user_id');
+        const flagCount = group(flags.data, 'user_id');
+        res.json({
+            status: 'ok',
+            users: users.data.map(u => {
+                const rows = byUser.get(u.id) || [];
+                return {
+                    ...u,
+                    impact: computeImpact(rows, tables.rules),
+                    rewardsEarned: rows.reduce((s, r) => s + (Number(r.reward_inr) || 0), 0),
+                    pendingWithdrawals: (pending.get(u.id) || []).reduce((s, r) => s + (Number(r.cost) || 0), 0),
+                    openFlags: (flagCount.get(u.id) || []).length,
+                };
+            }),
+        });
+    });
+
+    app.get('/api/admin/users/:id', ...admin, async (req, res) => {
+        const id = req.params.id;
+        if (!UUID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const [user, logs, redemptions, flags] = await Promise.all([
+            supabase.from('user_profiles').select('id, email, name, role, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt').eq('id', id).maybeSingle(),
+            supabase.from('waste_logs').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(100),
+            supabase.from('redemptions').select('*').eq('user_id', id).order('created_at', { ascending: false }),
+            supabase.from('fraud_flags').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(50),
+        ]);
+        for (const r of [user, logs, redemptions, flags]) if (r.error) throw r.error;
+        if (!user.data) return fail(res, 404, 'User not found');
+        res.json({ status: 'ok', user: user.data, logs: logs.data, redemptions: redemptions.data, flags: flags.data });
+    });
+
+    // Pause / resume a user's ability to earn (e.g. after confirmed fraud).
+    app.post('/api/admin/users/:id/block', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        if (!UUID_RE.test(id) || typeof (req.body && req.body.blocked) !== 'boolean') return fail(res, 400, 'Invalid request');
+        if (id === req.user.id) return fail(res, 400, 'You cannot change your own account here.');
+        const { data, error } = await supabase.from('user_profiles').update({ is_blocked: req.body.blocked }).eq('id', id).select('id, is_blocked').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'User not found');
+        res.json({ status: 'ok', user: data });
+    });
+
+    // Give canteen / store staff the "vendor" role (counter page only), or take it away.
+    app.post('/api/admin/users/:id/role', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        const role = req.body && req.body.role;
+        if (!UUID_RE.test(id) || !['user', 'vendor'].includes(role)) return fail(res, 400, 'Invalid request');
+        if (id === req.user.id) return fail(res, 400, 'You cannot change your own account here.');
+        const { data, error } = await supabase.from('user_profiles').update({ role }).eq('id', id).neq('role', 'admin').select('id, role').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'User not found');
+        caches.leagues.clear();
+        res.json({ status: 'ok', user: data });
+    });
+
+    // ---------------- redemptions ----------------
+    app.get('/api/admin/redemptions', ...admin, async (req, res) => {
+        let q = supabase.from('redemptions').select('*, user_profiles(name, email)').order('created_at', { ascending: true }).limit(1000);
+        if (req.query.scope !== 'all') q = q.in('status', ['Pending', 'Issued']);
+        const { data, error } = await q;
+        if (error) throw error;
+        res.json({
+            status: 'ok',
+            redemptions: (data || []).map(({ user_profiles: u, ...r }) => ({ ...r, userName: u ? u.name : null, userEmail: u ? u.email : null })),
+        });
+    });
+
+    // Pending -> Paid / Rejected (withdrawals), Issued -> Claimed / Cancelled (vouchers).
+    // Rejected / Cancelled refund the user. Each decision applies once (status guard in SQL).
+    async function decide(req, res, code, status) {
+        if (!CODE_RE.test(code) || !ADMIN_STATUSES.includes(status)) return fail(res, 400, 'Invalid request');
+        const outcome = await store.changeRedemptionStatus(code, r => planRedemptionStatusChange(r, { status }), req.user.email);
+        if (outcome.outcome === 'not_found') return fail(res, 404, 'Redemption not found');
+        if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.template || outcome.message, outcome.params);
+        if (outcome.outcome === 'conflict') return fail(res, 409, 'This redemption was already processed. Please refresh.');
+        caches.stats = null;
+        return res.json({ status: 'ok', redemption: outcome.result });
+    }
+
+    app.post('/api/admin/redemptions/status', ...adminWrite, (req, res) =>
+        decide(req, res, str(req.body && req.body.code), req.body && req.body.status));
+
+    // ---------------- voucher counter (canteen / store staff) ----------------
+    app.get('/api/counter/voucher/:code', verifyToken, loadProfile, requireCounter, async (req, res) => {
+        const code = str(req.params.code).toUpperCase();
+        if (!CODE_RE.test(code)) return fail(res, 400, 'Enter a code like NB-ABCD-2345.');
+        const { data, error } = await supabase.from('redemptions')
+            .select('code, item, type, cost, status, vendor, created_at, processed_at, processed_by, user_profiles(name)')
+            .eq('code', code).maybeSingle();
+        if (error) throw error;
+        if (!data || data.type !== 'points') return fail(res, 404, 'No voucher with this code.');
+        const { user_profiles: u, ...voucher } = data;
+        res.json({ status: 'ok', voucher: { ...voucher, userName: u ? u.name : null } });
+    });
+
+    app.post('/api/counter/voucher/:code/claim', verifyToken, loadProfile, requireCounter, limiters.write, (req, res) =>
+        decide(req, res, str(req.params.code).toUpperCase(), 'Claimed'));
+
+    // ---------------- fleet operations ----------------
+    async function loadFleet(days) {
+        const now = Date.now();
+        const since = new Date(now - Math.max(days, 30) * DAY_MS).toISOString();
+        const [bins, logs, collections, flags] = await Promise.all([
+            supabase.from('bins').select('*').order('name'),
+            supabase.from('waste_logs')
+                .select('bin_id, user_id, accepted, reject_reason, created_at, est_weight_kg, measured_weight_kg')
+                .gte('created_at', since).limit(100000),
+            supabase.from('bin_collections').select('*').order('collected_at', { ascending: false }).limit(2000),
+            supabase.from('fraud_flags').select('bin_id').is('resolved_at', null),
+        ]);
+        for (const r of [bins, logs, collections, flags]) if (r.error) throw r.error;
+        // Fill estimates need everything since the last emptying (up to 30 days); rates use the window.
+        const windowStart = now - days * DAY_MS;
+        const fleet = summarizeFleet({ bins: bins.data, logs: logs.data, collections: collections.data, flags: flags.data, nowMs: now });
+        const windowed = summarizeFleet({
+            bins: bins.data, logs: logs.data.filter(l => Date.parse(l.created_at) >= windowStart),
+            collections: collections.data, flags: flags.data, nowMs: now,
+        });
+        const merged = fleet.bins.map((b, i) => ({
+            ...windowed.bins[i],
+            fill: b.fill,
+        }));
+        return { bins: merged, totals: { ...windowed.totals, nearlyFull: merged.filter(b => b.fill.level >= 80).length }, rawBins: bins.data };
+    }
+
+    app.get('/api/admin/ops', ...admin, async (req, res) => {
+        const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 7));
+        const { bins, totals } = await loadFleet(days);
+        res.json({ status: 'ok', days, bins, totals, depot: config.DEPOT, qrPeriod: config.DYNAMIC_QR_PERIOD_S });
+    });
+
+    app.get('/api/admin/ops/route', ...admin, async (req, res) => {
+        const threshold = Math.min(100, Math.max(0, parseInt(req.query.threshold, 10) || 70));
+        const lat = num(req.query.lat, { min: -90, max: 90 });
+        const lng = num(req.query.lng, { min: -180, max: 180 });
+        const depot = Number.isFinite(lat) && Number.isFinite(lng) && lat !== null && lng !== null ? { lat, lng } : config.DEPOT;
+        const { bins } = await loadFleet(7);
+        res.json({ status: 'ok', threshold, ...planCollectionRoute(bins, { threshold, depot }) });
+    });
+
+    // Update a bin's settings.
+    app.post('/api/admin/bins/:id', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        if (!BIN_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const b = req.body || {};
+        const changes = {};
+        if ('status' in b) {
+            if (!['Active', 'Full', 'Inactive'].includes(b.status)) return fail(res, 400, 'Invalid request');
+            changes.status = b.status;
+        }
+        if ('stream' in b) {
+            if (!BIN_STREAMS.includes(b.stream)) return fail(res, 400, 'Invalid request');
+            changes.stream = b.stream;
+        }
+        if ('qrMode' in b) {
+            if (!['static', 'dynamic'].includes(b.qrMode)) return fail(res, 400, 'Invalid request');
+            changes.qr_mode = b.qrMode;
+        }
+        if ('capacityItems' in b) {
+            const n = num(b.capacityItems, { min: 1, max: 100000 });
+            if (!Number.isInteger(n)) return fail(res, 400, 'Invalid request');
+            changes.capacity_items = n;
+        }
+        if ('zone' in b) changes.zone = str(b.zone).slice(0, 60) || null;
+        if ('fillLevel' in b) {
+            const n = num(b.fillLevel, { min: 0, max: 100 });
+            if (!Number.isFinite(n)) return fail(res, 400, 'Invalid request');
+            Object.assign(changes, { fill_level: n, fill_source: 'manual', fill_updated_at: new Date().toISOString() });
+        }
+        if (!Object.keys(changes).length) return fail(res, 400, 'Nothing to update.');
+        const { data, error } = await supabase.from('bins').update(changes).eq('id', id).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'This bin is not registered.');
+        caches.stats = null;
+        res.json({ status: 'ok', bin: data });
+    });
+
+    // Record a collection: resets the fill level, logs weight and audited contamination.
+    app.post('/api/admin/bins/:id/empty', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        if (!BIN_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const b = req.body || {};
+        const weight = num(b.measuredWeightKg, { min: 0, max: 5000 });
+        const contamination = num(b.contaminationPct, { min: 0, max: 100 });
+        if (Number.isNaN(weight) || Number.isNaN(contamination)) return fail(res, 400, 'Invalid request');
+
+        const { bins } = await loadFleet(7);
+        const current = bins.find(x => String(x.id) === id);
+        if (!current) return fail(res, 404, 'This bin is not registered.');
+        const now = new Date().toISOString();
+        const { error: insertError } = await supabase.from('bin_collections').insert([{
+            bin_id: id,
+            collected_by: req.user.email,
+            fill_level_before: current.fill.level,
+            items_since_last: Math.round((current.fill.level / 100) * (current.capacityItems || 200)),
+            measured_weight_kg: weight,
+            contamination_pct: contamination,
+            notes: str(b.notes).slice(0, 500) || null,
+        }]);
+        if (insertError) throw insertError;
+        const changes = { last_emptied_at: now, fill_level: 0, fill_source: 'manual', fill_updated_at: now };
+        if (current.status === 'Full') changes.status = 'Active';
+        const { error } = await supabase.from('bins').update(changes).eq('id', id);
+        if (error) throw error;
+        res.json({ status: 'ok' });
+    });
+
+    app.get('/api/admin/bins/:id/collections', ...admin, async (req, res) => {
+        const id = req.params.id;
+        if (!BIN_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('bin_collections').select('*').eq('bin_id', id).order('collected_at', { ascending: false }).limit(50);
+        if (error) throw error;
+        res.json({ status: 'ok', collections: data });
+    });
+
+    // Device provisioning for the bin's screen (rotating QR) and sensors (fill level, scale).
+    app.get('/api/admin/bins/:id/device', ...admin, async (req, res) => {
+        const id = req.params.id;
+        if (!BIN_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        if (!config.QR_SECRET) return fail(res, 503, 'Bin verification is not configured on the server.');
+        const { data: bin, error } = await supabase.from('bins').select('id, name, device_key_version, qr_mode').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!bin) return fail(res, 404, 'This bin is not registered.');
+        const keyVersion = Number(bin.device_key_version || 1);
+        res.json({
+            status: 'ok',
+            binId: String(bin.id),
+            name: bin.name,
+            qrMode: bin.qr_mode,
+            keyVersion,
+            deviceKey: deriveDeviceKey(config.QR_SECRET, bin.id, keyVersion),
+            period: config.DYNAMIC_QR_PERIOD_S,
+        });
+    });
+
+    // Invalidate the bin's current device key (lost / tampered screen). Old rotating codes stop working.
+    app.post('/api/admin/bins/:id/rotate-key', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        if (!BIN_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const { data: bin, error } = await supabase.from('bins').select('device_key_version').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!bin) return fail(res, 404, 'This bin is not registered.');
+        const next = Number(bin.device_key_version || 1) + 1;
+        const { error: updateError } = await supabase.from('bins').update({ device_key_version: next }).eq('id', id).eq('device_key_version', bin.device_key_version);
+        if (updateError) throw updateError;
+        res.json({ status: 'ok', keyVersion: next });
+    });
+
+    // ---------------- fraud flags ----------------
+    app.get('/api/admin/flags', ...admin, async (req, res) => {
+        let q = supabase.from('fraud_flags').select('*, user_profiles(name, email, is_blocked)').order('created_at', { ascending: false }).limit(500);
+        if (req.query.scope !== 'all') q = q.is('resolved_at', null);
+        const { data, error } = await q;
+        if (error) throw error;
+        res.json({
+            status: 'ok',
+            flags: (data || []).map(({ user_profiles: u, ...f }) => ({
+                ...f, userName: u ? u.name : null, userEmail: u ? u.email : null, userBlocked: u ? u.is_blocked : null,
+            })),
+        });
+    });
+
+    app.post('/api/admin/flags/:id/resolve', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        const resolution = req.body && req.body.resolution;
+        if (!UUID_RE.test(id) || !['dismissed', 'confirmed'].includes(resolution)) return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('fraud_flags')
+            .update({ resolution, resolved_at: new Date().toISOString(), resolved_by: req.user.email })
+            .eq('id', id).is('resolved_at', null).select('id, user_id').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 409, 'This flag was already resolved. Please refresh.');
+        if (resolution === 'confirmed' && req.body.blockUser === true && data.user_id && data.user_id !== req.user.id) {
+            const { error: blockError } = await supabase.from('user_profiles').update({ is_blocked: true }).eq('id', data.user_id);
+            if (blockError) throw blockError;
+        }
+        res.json({ status: 'ok' });
+    });
+
+    // ---------------- reward table (database) ----------------
+    app.get('/api/admin/rewards', ...admin, async (req, res) => {
+        const [rules, catalog] = await Promise.all([
+            supabase.from('reward_rules').select('*').order('sort'),
+            supabase.from('reward_catalog').select('*').order('sort'),
+        ]);
+        if (rules.error) throw rules.error;
+        if (catalog.error) throw catalog.error;
+        res.json({ status: 'ok', rules: rules.data, catalog: catalog.data });
+    });
+
+    app.post('/api/admin/rewards/rule', ...adminWrite, async (req, res) => {
+        const b = req.body || {};
+        const wasteType = str(b.wasteType);
+        const reward = num(b.rewardInr, { min: 0, max: 10000 });
+        const points = num(b.points, { min: 0, max: 100000 });
+        if (!wasteType || !Number.isInteger(reward) || !Number.isInteger(points) || typeof b.active !== 'boolean') return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('reward_rules')
+            .update({ reward_inr: reward, points, active: b.active, updated_at: new Date().toISOString() })
+            .eq('waste_type', wasteType).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'Unknown waste type');
+        store.invalidateRewardTables();
+        res.json({ status: 'ok', rule: data });
+    });
+
+    app.post('/api/admin/rewards/item', ...adminWrite, async (req, res) => {
+        const b = req.body || {};
+        const item = str(b.item);
+        const cost = num(b.cost, { min: 1, max: 1000000 });
+        if (!item || !Number.isInteger(cost) || typeof b.active !== 'boolean') return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('reward_catalog')
+            .update({ cost, active: b.active, updated_at: new Date().toISOString() })
+            .eq('item', item).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'Unknown reward item');
+        store.invalidateRewardTables();
+        res.json({ status: 'ok', item: data });
+    });
+};

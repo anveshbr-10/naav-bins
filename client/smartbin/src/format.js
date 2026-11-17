@@ -21,7 +21,8 @@ export function formatCount(n) {
 
 export function formatDateTime(iso) {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : `${d.toLocaleDateString()} at ${d.toLocaleTimeString()}`;
+  // Language-neutral "date, time" (no English words), in the browser's locale format.
+  return Number.isNaN(d.getTime()) ? '—' : `${d.toLocaleDateString()}, ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 export function formatDate(iso) {

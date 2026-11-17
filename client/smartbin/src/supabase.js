@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { translate, tk } from './i18n';
 
 // Public values: the project URL and the *publishable* key are designed to be shipped to browsers.
 // Every table is protected by Row Level Security; the browser only talks to Supabase Auth.
@@ -37,22 +38,22 @@ export function getEnabledProviders() {
   return providerSettingsPromise;
 }
 
-// Friendly text for Supabase Auth errors.
-export function authErrorMessage(error, fallback = 'Something went wrong. Please try again.') {
-  if (!error) return fallback;
+// Friendly text for Supabase Auth errors, in the user's language.
+export function authErrorMessage(error, fallback = tk('Something went wrong. Please try again.')) {
+  if (!error) return translate(fallback);
   const code = error.code || '';
   const map = {
-    invalid_credentials: 'Invalid email or password.',
-    email_not_confirmed: 'Please confirm your email address first. Check your inbox for the link.',
-    user_already_exists: 'An account with this email already exists. Please sign in.',
-    weak_password: 'That password is too weak. Use at least 8 characters with letters and numbers.',
-    over_email_send_rate_limit: 'Too many emails were sent. Please wait a few minutes and try again.',
-    over_request_rate_limit: 'Too many attempts. Please wait a moment and try again.',
-    same_password: 'Your new password must be different from the old one.',
-    otp_expired: 'This link has expired. Please request a new one.',
+    invalid_credentials: tk('Invalid email or password.'),
+    email_not_confirmed: tk('Please confirm your email address first. Check your inbox for the link.'),
+    user_already_exists: tk('An account with this email already exists. Please sign in.'),
+    weak_password: tk('That password is too weak. Use at least 8 characters with letters and numbers.'),
+    over_email_send_rate_limit: tk('Too many emails were sent. Please wait a few minutes and try again.'),
+    over_request_rate_limit: tk('Too many attempts. Please wait a moment and try again.'),
+    same_password: tk('Your new password must be different from the old one.'),
+    otp_expired: tk('This link has expired. Please request a new one.'),
   };
-  if (map[code]) return map[code];
-  if (/invalid login credentials/i.test(error.message || '')) return map.invalid_credentials;
-  if (/email not confirmed/i.test(error.message || '')) return map.email_not_confirmed;
-  return error.message || fallback;
+  if (map[code]) return translate(map[code]);
+  if (/invalid login credentials/i.test(error.message || '')) return translate(map.invalid_credentials);
+  if (/email not confirmed/i.test(error.message || '')) return translate(map.email_not_confirmed);
+  return error.message || translate(fallback);
 }

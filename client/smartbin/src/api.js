@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { supabase } from './supabase';
+import { translate, tk } from './i18n';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://naav-bins.onrender.com').replace(/\/+$/, '');
 
@@ -16,10 +17,13 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Human-readable message from an API error (server message when available).
-export function apiErrorMessage(err, fallback = 'Something went wrong. Please try again.') {
+// Human-readable message from an API error, in the user's language. The API sends the English
+// template and its parameters ({ i18n: { key, params } }). Callers pass fallbacks wrapped in tk('…').
+export function apiErrorMessage(err, fallback = tk('Something went wrong. Please try again.')) {
   const data = err?.response?.data;
-  return data?.error || data?.message || (err?.response ? fallback : 'Server connection error. Please try again.');
+  if (data?.i18n?.key) return translate(data.i18n.key, data.i18n.params || undefined);
+  if (data?.error || data?.message) return translate(data.error || data.message);
+  return err?.response ? translate(fallback) : translate(tk('Server connection error. Please try again.'));
 }
 
 export function apiStatus(err) {

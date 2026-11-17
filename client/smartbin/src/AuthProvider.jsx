@@ -64,7 +64,7 @@ export default function AuthProvider({ children }) {
       user: session?.user || null,
       profile,
       profileStatus,
-      home: profile?.role === 'admin' ? '/admin' : '/dashboard',
+      home: profile?.role === 'admin' ? '/admin' : profile?.role === 'vendor' ? '/counter' : '/dashboard',
       signOut,
       reloadProfile,
     };

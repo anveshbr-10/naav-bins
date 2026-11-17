@@ -27,7 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
-      - name: Unit tests (rewards, redemptions, QR signing, balance writes)
+      - name: Unit tests (rewards, QR signing, geofence, photo hash, leagues, routing, balance writes)
         run: npm test
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
@@ -47,6 +47,8 @@ jobs:
           cache-dependency-path: client/smartbin/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - name: Kannada / Hindi translations cover every UI string
+        run: npm run i18n:check
       - run: npm test
       - name: Production build
         run: npm run build

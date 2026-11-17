@@ -5,6 +5,8 @@ import { supabase, AUTH_REDIRECTS, SOCIAL_PROVIDERS, getEnabledProviders, authEr
 import { useAuth } from './authContext';
 import { FullPageLoader, ProfileLoadError } from './authPages';
 import { Logo, BRAND_NAME } from './brand';
+import { useI18n } from './i18n';
+import { LanguageSwitcher } from './layout';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
 const styles = `
@@ -411,6 +413,7 @@ const LEAVES = [
 
 // ─── Social login buttons ─────────────────────────────────────────────────────
 function SocialButtons({ disabled, onSelect }) {
+  const { t } = useI18n();
   return (
     <>
       <div className="social-links">
@@ -418,8 +421,8 @@ function SocialButtons({ disabled, onSelect }) {
           <button
             key={p.id}
             type="button"
-            aria-label={`Continue with ${p.label}`}
-            title={`Continue with ${p.label}`}
+            aria-label={t('Continue with {provider}', { provider: p.label })}
+            title={t('Continue with {provider}', { provider: p.label })}
             disabled={disabled}
             onClick={() => onSelect(p)}
           >
@@ -429,7 +432,7 @@ function SocialButtons({ disabled, onSelect }) {
       </div>
       <div className="divider-row">
         <div className="divider-line"></div>
-        <span>or use your email</span>
+        <span>{t('or use your email')}</span>
         <div className="divider-line"></div>
       </div>
     </>
@@ -449,6 +452,7 @@ function Notice({ notice }) {
 // ─── Shared Auth Component ────────────────────────────────────────────────────
 function Auth({ initialPanel = 'login' }) {
   const { status, profileStatus, home } = useAuth();
+  const { t } = useI18n();
   const [panelActive, setPanelActive] = useState(initialPanel === 'register');
 
   // Login state
@@ -470,17 +474,17 @@ function Auth({ initialPanel = 'login' }) {
   if (status === 'signedIn') {
     if (profileStatus === 'error') return <ProfileLoadError />;
     if (profileStatus === 'ready') return <Navigate to={home} replace />;
-    return <FullPageLoader message="Signing you in… (the server may take up to 30 seconds to wake up)" />;
+    return <FullPageLoader message={t('Signing you in… (the server may take up to 30 seconds to wake up)')} />;
   }
 
   async function resendConfirmation(email) {
-    setLoginNotice({ type: 'success', text: 'Sending…' });
+    setLoginNotice({ type: 'success', text: t('Sending…') });
     const { error } = await supabase.auth.resend({
       type: 'signup', email, options: { emailRedirectTo: AUTH_REDIRECTS.callback() },
     });
     setLoginNotice(error
       ? { type: 'error', text: authErrorMessage(error) }
-      : { type: 'success', text: `We sent a new confirmation link to ${email}.` });
+      : { type: 'success', text: t('We sent a new confirmation link to {email}.', { email }) });
   }
 
   async function handleLogin(e) {
@@ -497,7 +501,7 @@ function Auth({ initialPanel = 'login' }) {
       type: 'error',
       text: authErrorMessage(error),
       action: unconfirmed
-        ? <button type="button" onClick={() => resendConfirmation(email)}>Resend link</button>
+        ? <button type="button" onClick={() => resendConfirmation(email)}>{t('Resend link')}</button>
         : null,
     });
   }
@@ -521,7 +525,7 @@ function Auth({ initialPanel = 'login' }) {
       setRegPassword('');
       setRegNotice({
         type: 'success',
-        text: `Almost done! We sent a confirmation link to ${email}. Open it to activate your account. Already registered? Just sign in.`,
+        text: t('Almost done! We sent a confirmation link to {email}. Open it to activate your account. Already registered? Just sign in.', { email }),
       });
     }
     // If email confirmation is switched off, a session is returned and this screen redirects automatically.
@@ -533,7 +537,7 @@ function Auth({ initialPanel = 'login' }) {
     try {
       const enabled = await getEnabledProviders();
       if (!enabled[provider.id]) {
-        setNotice({ type: 'error', text: `${provider.label} sign-in is not available yet. Please use your email and password.` });
+        setNotice({ type: 'error', text: t('{provider} sign-in is not available yet. Please use your email and password.', { provider: provider.label }) });
         setSocialBusy(false);
         return;
       }
@@ -554,9 +558,10 @@ function Auth({ initialPanel = 'login' }) {
     <>
       <style>{styles}</style>
       <div className="auth-page">
-        <Link to="/" className="auth-home" aria-label={`${BRAND_NAME} home`}>
+        <Link to="/" className="auth-home" aria-label={t('{brand} home', { brand: BRAND_NAME })}>
           <Logo size={34} tone="light" />
         </Link>
+        <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 20 }}><LanguageSwitcher tone="light" /></div>
         {/* Floating leaves background */}
         {LEAVES.map((l, i) => (
           <div
@@ -572,14 +577,14 @@ function Auth({ initialPanel = 'login' }) {
           {/* ══ Register Form ══ */}
           <div className="auth-form-box register-form-box">
             <form onSubmit={handleRegister}>
-              <h1>Create Account</h1>
-              <p className="form-subtitle">Join {BRAND_NAME} and start earning for recycling</p>
+              <h1>{t('Create account')}</h1>
+              <p className="form-subtitle">{t('Join {brand} and start earning for recycling', { brand: BRAND_NAME })}</p>
               <SocialButtons disabled={regLoading || socialBusy} onSelect={(p) => handleSocial(p, setRegNotice)} />
               <input
                 required type="text"
                 className="auth-input"
-                placeholder="Full Name"
-                aria-label="Full Name"
+                placeholder={t('Full name')}
+                aria-label={t('Full name')}
                 maxLength={60}
                 autoComplete="name"
                 value={regName}
@@ -589,8 +594,8 @@ function Auth({ initialPanel = 'login' }) {
               <input
                 required type="email"
                 className="auth-input"
-                placeholder="Email Address"
-                aria-label="Email Address"
+                placeholder={t('Email address')}
+                aria-label={t('Email address')}
                 autoComplete="email"
                 value={regEmail}
                 onChange={(e) => setRegEmail(e.target.value)}
@@ -599,8 +604,8 @@ function Auth({ initialPanel = 'login' }) {
               <input
                 required type="password"
                 className="auth-input"
-                placeholder="Password (min 8 characters)"
-                aria-label="Password (min 8 characters)"
+                placeholder={t('Password (min 8 characters)')}
+                aria-label={t('Password (min 8 characters)')}
                 minLength={8}
                 maxLength={72}
                 autoComplete="new-password"
@@ -611,14 +616,14 @@ function Auth({ initialPanel = 'login' }) {
               <Notice notice={regNotice} />
               <button type="submit" className="auth-btn" disabled={regLoading || socialBusy}>
                 {regLoading
-                  ? <><Loader2 size={16} className="spin" /> Signing Up...</>
-                  : 'Sign Up'}
+                  ? <><Loader2 size={16} className="spin" /> {t('Signing up…')}</>
+                  : t('Sign up')}
               </button>
               {/* Mobile toggle */}
               <div className="mobile-switch">
-                <p>Already have an account?</p>
+                <p>{t('Already have an account?')}</p>
                 <button type="button" className="mobile-switch-btn" onClick={() => setPanelActive(false)}>
-                  Sign In
+                  {t('Sign in')}
                 </button>
               </div>
             </form>
@@ -626,14 +631,14 @@ function Auth({ initialPanel = 'login' }) {
           {/* ══ Login Form ══ */}
           <div className="auth-form-box login-form-box">
             <form onSubmit={handleLogin}>
-              <h1>Welcome Back</h1>
-              <p className="form-subtitle">Sign in to your {BRAND_NAME} account</p>
+              <h1>{t('Welcome back')}</h1>
+              <p className="form-subtitle">{t('Sign in to your {brand} account', { brand: BRAND_NAME })}</p>
               <SocialButtons disabled={loginLoading || socialBusy} onSelect={(p) => handleSocial(p, setLoginNotice)} />
               <input
                 required type="email"
                 className="auth-input"
-                placeholder="Email Address"
-                aria-label="Email Address"
+                placeholder={t('Email address')}
+                aria-label={t('Email address')}
                 autoComplete="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
@@ -642,25 +647,25 @@ function Auth({ initialPanel = 'login' }) {
               <input
                 required type="password"
                 className="auth-input"
-                placeholder="Password"
-                aria-label="Password"
+                placeholder={t('Password')}
+                aria-label={t('Password')}
                 autoComplete="current-password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 disabled={loginLoading}
               />
-              <Link to="/forgot-password" className="forgot-link">Forgot your password?</Link>
+              <Link to="/forgot-password" className="forgot-link">{t('Forgot your password?')}</Link>
               <Notice notice={loginNotice} />
               <button type="submit" className="auth-btn" disabled={loginLoading || socialBusy}>
                 {loginLoading
-                  ? <><Loader2 size={16} className="spin" /> Logging In...</>
-                  : 'Sign In'}
+                  ? <><Loader2 size={16} className="spin" /> {t('Signing in…')}</>
+                  : t('Sign in')}
               </button>
               {/* Mobile toggle */}
               <div className="mobile-switch">
-                <p>Don't have an account?</p>
+                <p>{t("Don't have an account?")}</p>
                 <button type="button" className="mobile-switch-btn" onClick={() => setPanelActive(true)}>
-                  Sign Up
+                  {t('Sign up')}
                 </button>
               </div>
             </form>
@@ -671,16 +676,16 @@ function Auth({ initialPanel = 'login' }) {
               {/* Left side — visible when Register is active */}
               <div className="panel-content panel-content-left">
                 <div className="panel-icon">🌿</div>
-                <h1>Already have an account?</h1>
-                <p>Stay connected. Sign in with your credentials and continue your green journey with {BRAND_NAME}.</p>
-                <button className="transparent-btn" onClick={() => setPanelActive(false)}>Sign In</button>
+                <h1>{t('Already have an account?')}</h1>
+                <p>{t('Stay connected. Sign in and continue your green journey with {brand}.', { brand: BRAND_NAME })}</p>
+                <button className="transparent-btn" onClick={() => setPanelActive(false)}>{t('Sign in')}</button>
               </div>
               {/* Right side — visible by default */}
               <div className="panel-content panel-content-right">
                 <div className="panel-icon">♻️</div>
-                <h1>Using for the first time?</h1>
-                <p>Begin your amazing journey. Create an account and make a real impact on the environment today.</p>
-                <button className="transparent-btn" onClick={() => setPanelActive(true)}>Sign Up</button>
+                <h1>{t('Using it for the first time?')}</h1>
+                <p>{t('Create an account and make a real impact on your campus environment today.')}</p>
+                <button className="transparent-btn" onClick={() => setPanelActive(true)}>{t('Sign up')}</button>
               </div>
             </div>
           </div>

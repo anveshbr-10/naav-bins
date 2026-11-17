@@ -4,6 +4,8 @@
 //   node scripts/generate-bin-qr.js [output.html]
 //
 // Print the resulting page and stick each QR on its bin. Codes stay valid until QR_SECRET changes.
+// Bins in "dynamic" QR mode show a rotating code on their screen instead (set up from the operations
+// console); they get a card saying so, because a printed code is refused at those bins.
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
 
@@ -23,12 +25,21 @@ async function main() {
     if (!SUPABASE_URL || !key) throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY must be set in server/.env');
 
     const supabase = createClient(SUPABASE_URL, key, { auth: { persistSession: false } });
-    const { data: bins, error } = await supabase.from('bins').select('id, name, status').order('id');
+    const { data: bins, error } = await supabase.from('bins').select('id, name, status, qr_mode').order('id');
     if (error) throw error;
     if (!bins.length) throw new Error('No bins found in the bins table');
 
     const cards = [];
     for (const bin of bins) {
+        if (bin.qr_mode === 'dynamic') {
+            console.log(`${String(bin.id).padEnd(6)} ${bin.name.padEnd(40)} (live QR on screen — not printed)`);
+            cards.push(`
+      <figure class="live">
+        <p>Live QR on the bin's screen</p>
+        <figcaption><strong>${escapeHtml(bin.name)}</strong><br/>Bin #${escapeHtml(bin.id)} · ${escapeHtml(bin.status)}</figcaption>
+      </figure>`);
+            continue;
+        }
         const payload = createBinQrPayload(bin.id, QR_SECRET);
         const dataUrl = await QRCode.toDataURL(payload, { errorCorrectionLevel: 'M', margin: 2, width: 320 });
         console.log(`${String(bin.id).padEnd(6)} ${bin.name.padEnd(40)} ${payload}`);
@@ -47,6 +58,7 @@ async function main() {
   main { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 24px; }
   figure { margin: 0; padding: 16px; border: 1px dashed #999; text-align: center; break-inside: avoid; }
   img { width: 100%; max-width: 240px; }
+  .live p { padding: 80px 0; color: #555; font-style: italic; }
 </style></head>
 <body><h1>Naav Bins QR codes</h1><main>${cards.join('')}</main></body></html>`);
 
