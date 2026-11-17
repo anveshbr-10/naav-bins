@@ -255,7 +255,7 @@ GitHub Actions runs all of the above, plus `npm audit` on production dependencie
 Register normally, confirm the email, then in the Supabase SQL Editor:
 
 ```sql
-update public.user_profiles set role = 'admin' where email = 'naavhackers@gmail.com';
+update public.user_profiles set role = 'admin' where email = 'you@example.com';
 ```
 
 Sign out and back in to open the operations console. Admins give canteen or store staff the `vendor` role from **Users → Give counter access**. Vendors only see the voucher counter.
@@ -268,6 +268,26 @@ npm run generate:qr        # writes server/bin-qr-codes.html for bins in static 
 ```
 
 Codes stay valid until `QR_SECRET` changes. Bins in live mode get a "Live QR on screen" card instead.
+
+### Changing `QR_SECRET` (only if required)
+
+Change it only if the secret has leaked (committed, shared or shown on screen). For a single lost or tampered bin screen, use **Replace key** on that bin instead; it affects only that bin.
+
+1. Generate a new secret (at least 32 characters):
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+   ```
+
+2. Put the **same value** in both places:
+   - Local: `QR_SECRET=<value>` in `server/.env`, then restart the server.
+   - Production: Render → your service → **Environment** → edit `QR_SECRET` → save (Render redeploys).
+3. Redo everything the old secret signed. Changing it invalidates every code and bin key at once:
+   - **Printed codes:** run `npm run generate:qr` (with the new secret in your local `.env`), then reprint and replace every sticker.
+   - **Bin screens:** for each live bin, open **Admin → Bins → Bin screen setup** and reopen the new link on its tablet.
+   - **Sensors:** update them with the new device key from the same setup screen.
+
+Never commit `server/.env`; keep `QR_SECRET` empty in `.env.example`.
 
 ## API
 
