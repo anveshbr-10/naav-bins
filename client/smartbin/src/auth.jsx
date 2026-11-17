@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import api, { apiErrorMessage } from './api';
+import { useNavigate, Link, Navigate } from 'react-router-dom';
+import api, { apiErrorMessage, getSession } from './api';
 import { Loader2, ArrowLeft } from 'lucide-react';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
@@ -380,6 +380,7 @@ function Auth({ initialPanel = 'login' }) {
   const [regPassword, setRegPassword] = useState('');
   const [regLoading, setRegLoading] = useState(false);
   const navigate = useNavigate();
+  const session = getSession();
 
   // ── Login handler (original logic preserved) ──
   async function handleLogin(e) {
@@ -430,6 +431,9 @@ function Auth({ initialPanel = 'login' }) {
     }
   }
 
+  // Already signed in: skip the auth screen.
+  if (session) return <Navigate to={session.role === 'admin' ? '/admin' : '/dashboard'} replace />;
+
   return (
     <>
       <style>{styles}</style>
@@ -450,16 +454,6 @@ function Auth({ initialPanel = 'login' }) {
             <form onSubmit={handleRegister}>
               <h1>Create Account</h1>
               <p className="form-subtitle">Join the SmartBin revolution today</p>
-              <div className="social-links">
-                <a href="#" aria-label="Facebook"><i className="fab fa-facebook-f"></i></a>
-                <a href="#" aria-label="Google"><i className="fab fa-google"></i></a>
-                <a href="#" aria-label="LinkedIn"><i className="fab fa-linkedin-in"></i></a>
-              </div>
-              <div className="divider-row">
-                <div className="divider-line"></div>
-                <span>or use your email</span>
-                <div className="divider-line"></div>
-              </div>
               <input
                 required type="text"
                 className="auth-input"
@@ -509,16 +503,6 @@ function Auth({ initialPanel = 'login' }) {
             <form onSubmit={handleLogin}>
               <h1>Welcome Back</h1>
               <p className="form-subtitle">Login with your SmartBin Credentials</p>
-              <div className="social-links">
-                <a href="#" aria-label="Facebook"><i className="fab fa-facebook-f"></i></a>
-                <a href="#" aria-label="Google"><i className="fab fa-google"></i></a>
-                <a href="#" aria-label="LinkedIn"><i className="fab fa-linkedin-in"></i></a>
-              </div>
-              <div className="divider-row">
-                <div className="divider-line"></div>
-                <span>or use your account</span>
-                <div className="divider-line"></div>
-              </div>
               <input
                 required type="email"
                 className="auth-input"
@@ -535,7 +519,7 @@ function Auth({ initialPanel = 'login' }) {
                 onChange={(e) => setLoginPassword(e.target.value)}
                 disabled={loginLoading}
               />
-              <a href="#" className="forgot-link">Forgot your password?</a>
+              <Link to="/about#contact" className="forgot-link">Forgot your password? Contact support</Link>
               <button type="submit" className="auth-btn" disabled={loginLoading}>
                 {loginLoading
                   ? <><Loader2 size={16} className="spin" /> Logging In...</>

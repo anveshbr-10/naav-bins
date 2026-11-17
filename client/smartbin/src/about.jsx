@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
     AlertCircle,
     Lightbulb,
@@ -16,6 +16,12 @@ import {
 
 export default function About() {
     const navigate = useNavigate();
+    const location = useLocation();
+
+    // Support deep links like /about#contact (e.g. from "Forgot password").
+    React.useEffect(() => {
+        if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+    }, [location.hash]);
 
     const [isSending, setIsSending] = React.useState(false);
 
@@ -170,7 +176,7 @@ export default function About() {
           CONTACT US SECTION
       ========================================= */}
 
-            <div className="max-w-5xl mx-auto px-4 mt-16">
+            <div id="contact" className="max-w-5xl mx-auto px-4 mt-16 scroll-mt-8">
                 <h2 className="text-3xl font-bold text-center text-slate-800 mb-12">Get in Touch</h2>
 
                 <div className="grid md:grid-cols-5 gap-8 bg-white rounded-3xl shadow-lg overflow-hidden border border-slate-100">

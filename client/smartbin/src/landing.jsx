@@ -1,9 +1,12 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getSession } from './api';
 import { Recycle, ArrowRight, Wallet, Leaf, TreePine } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
+  const session = getSession();
+  const home = session?.role === 'admin' ? '/admin' : '/dashboard';
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* 1. NAVBAR */}
@@ -25,18 +28,29 @@ export default function Landing() {
           >
             About
           </button>
-          <button
-            onClick={() => navigate('/login')}
-            className="text-gray-600 font-medium hover:text-green-600 transition"
-          >
-            Login
-          </button>
-          <button
-            onClick={() => navigate('/register')}
-            className="bg-green-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-green-700 transition shadow-lg"
-          >
-            Register
-          </button>
+          {session ? (
+            <button
+              onClick={() => navigate(home)}
+              className="bg-green-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-green-700 transition shadow-lg"
+            >
+              Go to Dashboard
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => navigate('/login')}
+                className="text-gray-600 font-medium hover:text-green-600 transition"
+              >
+                Login
+              </button>
+              <button
+                onClick={() => navigate('/register')}
+                className="bg-green-600 text-white px-6 py-2 rounded-full font-semibold hover:bg-green-700 transition shadow-lg"
+              >
+                Register
+              </button>
+            </>
+          )}
         </div>
       </nav>
       {/* 2. HERO SECTION */}
@@ -49,6 +63,16 @@ export default function Landing() {
           <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto">
             Scan. Dispose. Earn. A smarter way to manage waste sustainably. Join thousands of users making a difference today.
           </p>
+          {session ? (
+            <div className="flex justify-center">
+              <button
+                onClick={() => navigate(home)}
+                className="flex items-center justify-center gap-2 bg-green-600 text-white px-8 py-4 rounded-full text-lg font-bold hover:bg-green-700 transition shadow-xl transform hover:scale-105"
+              >
+                Go to Dashboard <ArrowRight size={20} />
+              </button>
+            </div>
+          ) : (
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
               onClick={() => navigate('/register')}
@@ -63,6 +87,7 @@ export default function Landing() {
               Login
             </button>
           </div>
+          )}
         </div>
       </header>
       {/* 3. STATS SECTION (From the video) */}

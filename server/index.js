@@ -9,7 +9,10 @@ const admin = require('firebase-admin');
 const { createClient } = require('@supabase/supabase-js');
 
 const { verifyBinQrPayload } = require('./lib/binQr');
-const { REWARD_MAP, REDEEM_CATALOG, planWasteDeposit, planRedemption } = require('./lib/rewards');
+const {
+    REWARD_MAP, REDEEM_CATALOG, planWasteDeposit, planRedemption,
+    computeImpact, publicCatalog, generateVoucherCode, isValidUpiId,
+} = require('./lib/rewards');
 const { createProfileStore } = require('./lib/profileStore');
 
 // ==========================================
@@ -276,7 +279,7 @@ app.get('/api/dashboard', verifyToken, async (req, res) => {
     try {
         const user = await profiles.getProfile(req.userEmail);
         if (!user) return fail(res, 404, 'User not found in database');
-        res.json({ status: 'ok', user });
+        res.json({ status: 'ok', user, impact: computeImpact(user.logs) });
     } catch (err) {
         console.error('Dashboard error:', err);
         return fail(res, 500, 'Server Error');
@@ -357,10 +360,16 @@ app.post('/api/add-waste', verifyToken, writeLimiter, async (req, res) => {
 
 // REDEEM: cost and type come from the server catalogue, never from the client.
 app.post('/api/redeem', verifyToken, writeLimiter, async (req, res) => {
-    if (!hasKey(REDEEM_CATALOG, req.body && req.body.item)) return fail(res, 400, 'Unknown reward item');
+    const item = req.body && req.body.item;
+    const upiId = req.body && req.body.upiId;
+    if (!hasKey(REDEEM_CATALOG, item)) return fail(res, 400, 'Unknown reward item');
+    if (REDEEM_CATALOG[item].type === 'money' && !isValidUpiId(upiId)) {
+        return fail(res, 400, 'Please enter a valid UPI ID (e.g. name@bank).');
+    }
     try {
+        const code = generateVoucherCode();
         const outcome = await profiles.atomicUpdate(req.userEmail, user =>
-            planRedemption(user, { item: req.body && req.body.item, now: Date.now() }));
+            planRedemption(user, { item, upiId, code, now: Date.now() }));
 
         if (outcome.outcome === 'not_found') return fail(res, 404, 'User not found in database');
         if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.message);
@@ -371,6 +380,11 @@ app.post('/api/redeem', verifyToken, writeLimiter, async (req, res) => {
         console.error('Redeem error:', err);
         return fail(res, 500, 'Server Error');
     }
+});
+
+// REWARDS CATALOGUE (public): single source of truth for reward amounts and redeemable items.
+app.get('/api/rewards/catalog', (req, res) => {
+    res.json({ status: 'ok', ...publicCatalog() });
 });
 
 // ADMIN: GET ALL USERS — admins only.

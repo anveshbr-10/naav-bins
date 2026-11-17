@@ -11,13 +11,73 @@ const REWARD_MAP = Object.freeze({
 });
 
 const REDEEM_CATALOG = Object.freeze({
-    'Movie Voucher':  Object.freeze({ cost: 500, type: 'points' }),
-    'Bus Pass':       Object.freeze({ cost: 200, type: 'points' }),
-    'Metro Recharge': Object.freeze({ cost: 300, type: 'points' }),
-    'Bank Transfer':  Object.freeze({ cost: 100, type: 'money' }),
+    'Movie Voucher': Object.freeze({
+        cost: 500, type: 'points', description: 'Get ₹200 off on BookMyShow',
+        partner: 'BookMyShow', partnerUrl: 'https://in.bookmyshow.com',
+    }),
+    'Bus Pass': Object.freeze({
+        cost: 200, type: 'points', description: 'One Day City Bus Pass',
+        partner: 'BMTC', partnerUrl: 'https://mybmtc.karnataka.gov.in',
+    }),
+    'Metro Recharge': Object.freeze({
+        cost: 300, type: 'points', description: 'Add ₹50 to your Metro Card',
+        partner: 'Namma Metro', partnerUrl: 'https://english.bmrc.co.in',
+    }),
+    'Bank Transfer': Object.freeze({
+        cost: 100, type: 'money', description: 'Withdraw ₹100 to your UPI ID',
+        partner: null, partnerUrl: null,
+    }),
 });
 
+// Estimated environmental impact per deposited item.
+// itemKg: typical weight of one item of that material (bottle, can, carton...).
+// co2PerKg: kg CO2e avoided per kg recycled instead of landfilled — conservative, rounded-down values
+// based on US EPA WARM recycling factors. These are estimates until bins can weigh items.
+const IMPACT = Object.freeze({
+    'Plastic':           Object.freeze({ itemKg: 0.025, co2PerKg: 1.0 }),
+    'Metal':             Object.freeze({ itemKg: 0.015, co2PerKg: 4.0 }),
+    'Paper / Cardboard': Object.freeze({ itemKg: 0.05,  co2PerKg: 3.0 }),
+    'Organic':           Object.freeze({ itemKg: 0.1,   co2PerKg: 0.5 }),
+    'Glass':             Object.freeze({ itemKg: 0.25,  co2PerKg: 0.3 }),
+    'Other Trash':       Object.freeze({ itemKg: 0.05,  co2PerKg: 0 }),
+});
+const DEFAULT_IMPACT = Object.freeze({ itemKg: 0.05, co2PerKg: 0 });
+
+const UPI_RE = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,63}$/;
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no 0/O/1/I
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function generateVoucherCode(randomBytes = require('crypto').randomBytes) {
+    const chars = Array.from(randomBytes(8), b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+    return `NB-${chars.slice(0, 4)}-${chars.slice(4)}`;
+}
+
+function isValidUpiId(value) {
+    return typeof value === 'string' && UPI_RE.test(value.trim());
+}
+
+// Totals derived from the activity log. Stored per-log weights from older versions were placeholders,
+// so impact is always recomputed from the per-material estimates.
+function computeImpact(logs) {
+    const list = Array.isArray(logs) ? logs : [];
+    let wasteKg = 0;
+    let co2Kg = 0;
+    for (const log of list) {
+        const f = lookup(IMPACT, log && log.wasteType) || DEFAULT_IMPACT;
+        wasteKg += f.itemKg;
+        co2Kg += f.itemKg * f.co2PerKg;
+    }
+    const round = n => Math.round(n * 1000) / 1000;
+    return { items: list.length, wasteKg: round(wasteKg), co2Kg: round(co2Kg) };
+}
+
+function publicCatalog() {
+    return {
+        rewards: Object.entries(REWARD_MAP).map(([wasteType, r]) => ({ wasteType, reward: r.reward, points: r.points })),
+        redeem: Object.entries(REDEEM_CATALOG).map(([item, e]) => ({ item, ...e })),
+    };
+}
 
 function lookup(table, key) {
     return typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
@@ -59,7 +119,8 @@ function planWasteDeposit(user, { wasteType, binName, sessionId, now, cooldownMs
     const newLog = {
         date: new Date(now).toISOString(),
         wasteType,
-        weight: 0.5,
+        weight: (lookup(IMPACT, wasteType) || DEFAULT_IMPACT).itemKg, // estimated kg
+
         amount: rule.reward,
         location: binName,
         session: sessionId,
@@ -76,9 +137,11 @@ function planWasteDeposit(user, { wasteType, binName, sessionId, now, cooldownMs
 }
 
 // Decide what a redemption does to a profile. Pure function: no I/O.
-function planRedemption(user, { item, now }) {
+// Points items issue a voucher code immediately; money withdrawals become a pending payout request.
+function planRedemption(user, { item, now, code, upiId }) {
     const entry = lookup(REDEEM_CATALOG, item);
     if (!entry) return reject(400, 'Unknown reward item');
+    if (entry.type === 'money' && !isValidUpiId(upiId)) return reject(400, 'Please enter a valid UPI ID (e.g. name@bank).');
 
     const wallet = toNumber(user.walletBalance);
     const points = toNumber(user.ecoPoints);
@@ -92,13 +155,26 @@ function planRedemption(user, { item, now }) {
         changes.ecoPoints = points - entry.cost;
     }
 
-    const redemptions = Array.isArray(user.redemptions) ? user.redemptions : [];
-    changes.redemptions = [
-        ...redemptions,
-        { date: new Date(now).toISOString(), item, cost: entry.cost, type: entry.type },
-    ];
+    const record = {
+        date: new Date(now).toISOString(),
+        item,
+        cost: entry.cost,
+        type: entry.type,
+        code,
+        status: entry.type === 'money' ? 'Pending' : 'Issued',
+    };
+    if (entry.type === 'money') record.upiId = upiId.trim();
 
-    return { changes, result: { item, cost: entry.cost, type: entry.type } };
+    const redemptions = Array.isArray(user.redemptions) ? user.redemptions : [];
+    changes.redemptions = [...redemptions, record];
+
+    return {
+        changes,
+        result: { ...record, partner: entry.partner, partnerUrl: entry.partnerUrl },
+    };
 }
 
-module.exports = { REWARD_MAP, REDEEM_CATALOG, planWasteDeposit, planRedemption };
+module.exports = {
+    REWARD_MAP, REDEEM_CATALOG, IMPACT,
+    planWasteDeposit, planRedemption, computeImpact, publicCatalog, generateVoucherCode, isValidUpiId,
+};
