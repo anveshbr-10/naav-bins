@@ -311,12 +311,16 @@ In Google Maps, right-click the exact spot where the bin stands and click the co
 
 ```sql
 insert into public.bins (id, name, lat, lng, status, stream, zone, capacity_items, qr_mode)
-values ('bin_library', 'Library Bin', 12.96354, 77.50512, 'Active', 'station', 'Library block', 200, 'static');
+values ((select coalesce(max(id), 0) + 1 from public.bins),
+        'Library Bin', 12.96354, 77.50512, 'Active', 'station', 'Library block', 200, 'static')
+returning id, name;
 ```
+
+The production `bins` table uses **numeric ids** (it predates the setup scripts), so the id is the next free number; `returning` shows which one was used. Note it down: every other command below needs it (the examples use `7`; replace it with your bin's id). To list existing bins: `select id, name, status from public.bins order by id;`
 
 | Column | Meaning |
 |---|---|
-| `id` | Permanent unique ID: letters, digits, `_` or `-`, no spaces. It is baked into the QR code, so **never change it**. |
+| `id` | Permanent unique number (picked automatically above). It is baked into the QR code, so **never change it**. |
 | `name` | Name shown to users and admins |
 | `lat`, `lng` | Location (see above) |
 | `status` | `Active`, `Full` or `Inactive` (use `Inactive` until the bin is installed) |
@@ -337,13 +341,13 @@ Refresh the console: the bin appears in the bins table, the fleet map and the pu
 - **Rename:**
 
   ```sql
-  update public.bins set name = 'Main Library Bin' where id = 'bin_library';
+  update public.bins set name = 'Main Library Bin' where id = 7;
   ```
 
 ### Move a bin to a new location
 
 ```sql
-update public.bins set lat = 12.96410, lng = 77.50633, zone = 'New block' where id = 'bin_library';
+update public.bins set lat = 12.96410, lng = 77.50633, zone = 'New block' where id = 7;
 ```
 
 The QR code stays the same (it contains the `id`, not the location), so the sticker or screen simply moves with the bin. Past deposits keep their history.
@@ -353,7 +357,7 @@ The QR code stays the same (it contains the `id`, not the location), so the stic
 **Prefer retiring it** — it disappears from scanning and the collection route but keeps its history in reports:
 
 ```sql
-update public.bins set status = 'Inactive' where id = 'bin_library';
+update public.bins set status = 'Inactive' where id = 7;
 ```
 
 (or console → **Bins → Settings → Status: Inactive**). Remove its sticker or screen so nobody tries to scan it.
@@ -361,7 +365,7 @@ update public.bins set status = 'Inactive' where id = 'bin_library';
 **Delete permanently** only for a bin added by mistake:
 
 ```sql
-delete from public.bins where id = 'bin_library';
+delete from public.bins where id = 7;
 ```
 
 Past deposits and collections are kept (they store the bin's id and name), but the bin vanishes from every map and report filter, and its QR code stops working. Do not reuse a deleted bin's `id` for a different bin: its old printed codes would become valid again.
