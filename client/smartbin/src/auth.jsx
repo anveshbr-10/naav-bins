@@ -1,5 +1,5 @@
 import { BackButton } from './nav';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { supabase, AUTH_REDIRECTS, SOCIAL_PROVIDERS, getEnabledProviders, authErrorMessage } from './supabase';
@@ -7,6 +7,22 @@ import { useAuth } from './authContext';
 import { FullPageLoader, ProfileLoadError } from './authPages';
 import { Logo, BRAND_NAME } from './brand';
 import { useI18n } from './i18n';
+import api, { apiErrorMessage, apiStatus } from './api';
+
+// Seconds before another confirmation email can be requested from this screen.
+const RESEND_COOLDOWN_S = 60;
+
+// Server-side check that the address can receive the confirmation link. Returns null when it can
+// (or when the check is unavailable, so a sleeping server never blocks sign-up), else { text, suggestion }.
+async function checkRegistrationEmail(email) {
+  try {
+    await api.post('/api/auth/check-email', { email }, { timeout: 8000 });
+    return null;
+  } catch (err) {
+    if (apiStatus(err) !== 400) return null;
+    return { text: apiErrorMessage(err), suggestion: err.response?.data?.i18n?.params?.suggestion || null };
+  }
+}
 import { LanguageSwitcher } from './layout';
 
 // ─── Inline Styles ────────────────────────────────────────────────────────────
@@ -445,7 +461,7 @@ function Notice({ notice }) {
   return (
     <p className={`form-note ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>
       {notice.text}
-      {notice.action}
+      {typeof notice.action === 'function' ? notice.action() : notice.action}
     </p>
   );
 }
@@ -470,6 +486,13 @@ function Auth({ initialPanel = 'login' }) {
   const [regNotice, setRegNotice] = useState(null);
 
   const [socialBusy, setSocialBusy] = useState(false);
+  const [resendWait, setResendWait] = useState(0);
+
+  useEffect(() => {
+    if (resendWait <= 0) return undefined;
+    const id = setTimeout(() => setResendWait((s) => s - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendWait]);
 
   // Signed in (password, social or email link): go to the right home once the role is known.
   if (status === 'signedIn') {
@@ -478,12 +501,23 @@ function Auth({ initialPanel = 'login' }) {
     return <FullPageLoader message={t('Signing you in… (the server may take up to 30 seconds to wake up)')} />;
   }
 
-  async function resendConfirmation(email) {
-    setLoginNotice({ type: 'success', text: t('Sending…') });
+  // Shows a countdown so people do not burn through the email limit by tapping repeatedly.
+  function resendButton(onClick) {
+    return (
+      <button type="button" onClick={onClick} disabled={resendWait > 0}>
+        {resendWait > 0 ? t('Resend link in {n}s', { n: resendWait }) : t('Resend link')}
+      </button>
+    );
+  }
+
+  async function resendConfirmation(email, setNotice = setLoginNotice) {
+    if (resendWait > 0) return;
+    setResendWait(RESEND_COOLDOWN_S);
+    setNotice({ type: 'success', text: t('Sending…') });
     const { error } = await supabase.auth.resend({
       type: 'signup', email, options: { emailRedirectTo: AUTH_REDIRECTS.callback() },
     });
-    setLoginNotice(error
+    setNotice(error
       ? { type: 'error', text: authErrorMessage(error) }
       : { type: 'success', text: t('We sent a new confirmation link to {email}.', { email }) });
   }
@@ -502,7 +536,7 @@ function Auth({ initialPanel = 'login' }) {
       type: 'error',
       text: authErrorMessage(error),
       action: unconfirmed
-        ? <button type="button" onClick={() => resendConfirmation(email)}>{t('Resend link')}</button>
+        ? () => resendButton(() => resendConfirmation(email))
         : null,
     });
   }
@@ -512,6 +546,18 @@ function Auth({ initialPanel = 'login' }) {
     setRegNotice(null);
     setRegLoading(true);
     const email = regEmail.trim();
+    const problem = await checkRegistrationEmail(email);
+    if (problem) {
+      setRegLoading(false);
+      setRegNotice({
+        type: 'error',
+        text: problem.text,
+        action: problem.suggestion
+          ? <button type="button" onClick={() => { setRegEmail(problem.suggestion); setRegNotice(null); }}>{t('Use {email}', { email: problem.suggestion })}</button>
+          : null,
+      });
+      return;
+    }
     const { data, error } = await supabase.auth.signUp({
       email,
       password: regPassword,
@@ -524,9 +570,11 @@ function Auth({ initialPanel = 'login' }) {
     }
     if (!data.session) {
       setRegPassword('');
+      setResendWait(RESEND_COOLDOWN_S);
       setRegNotice({
         type: 'success',
         text: t('Almost done! We sent a confirmation link to {email}. Open it to activate your account. Already registered? Just sign in.', { email }),
+        action: () => resendButton(() => resendConfirmation(email, setRegNotice)),
       });
     }
     // If email confirmation is switched off, a session is returned and this screen redirects automatically.

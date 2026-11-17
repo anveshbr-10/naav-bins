@@ -213,6 +213,7 @@ const ctx = {
         scan: rateLimit({ windowMs: MIN, max: 20, keyFn: req => `scan:${req.user.id}` }),
         write: rateLimit({ windowMs: MIN, max: 30, keyFn: req => `write:${req.user.id}` }),
         device: rateLimit({ windowMs: MIN, max: 120, keyFn: req => `device:${req.get('x-bin-id') || req.ip}` }),
+        emailCheck: rateLimit({ windowMs: MIN, max: 20, keyFn: req => `email:${req.ip}` }),
     },
     // Short-lived caches that writes can clear.
     caches: { stats: null, leagues: new Map() },

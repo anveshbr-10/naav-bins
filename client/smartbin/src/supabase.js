@@ -47,7 +47,7 @@ export function authErrorMessage(error, fallback = tk('Something went wrong. Ple
     email_not_confirmed: tk('Please confirm your email address first. Check your inbox for the link.'),
     user_already_exists: tk('An account with this email already exists. Please sign in.'),
     weak_password: tk('That password is too weak. Use at least 8 characters with letters and numbers.'),
-    over_email_send_rate_limit: tk('Too many emails were sent. Please wait a few minutes and try again.'),
+    over_email_send_rate_limit: tk('We have sent several emails to this address recently. Please check your inbox and spam folder, or try again in a few minutes.'),
     over_request_rate_limit: tk('Too many attempts. Please wait a moment and try again.'),
     same_password: tk('Your new password must be different from the old one.'),
     otp_expired: tk('This link has expired. Please request a new one.'),

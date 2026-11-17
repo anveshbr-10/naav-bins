@@ -91,6 +91,10 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - Reward table and campus-credit catalogue editor.
 - One-click fill marking per bin: **Partly full** (60%, stays open), **Full** (100%, closed to deposits and added to the route) and **Emptied** (resets to 0% and records the collection). See [Bin fill levels and status](#bin-fill-levels-and-status).
 
+**Sign-up email check**
+- Before Supabase sends a confirmation link, the API checks the address: valid format, common typos (`gmial.com` → offers `gmail.com`), throwaway inbox services (Mailinator, 10-minute mail, …) and whether the domain can receive mail at all (DNS MX lookup). Dummy addresses are refused, so no link is wasted on them. No service can confirm a mailbox exists without emailing it, so the confirmation link remains the final proof. If the check cannot run (server asleep, DNS down), sign-up continues.
+- "Resend link" has a 60-second countdown, so repeated taps cannot exhaust the email limit.
+
 **Navigation and sessions**
 - Every page (except the landing page and the bin kiosk screen) has an in-app **Back** button. It returns to the previous page on the site or, if there is none, to the visitor's home page (dashboard, operations console or counter), so nobody depends on the browser's own back control.
 - **Log out** clears the pages visited in that tab: the browser's Back then leaves the site instead of reopening the dashboard or console. Protected pages always redirect to login once the session is gone.
@@ -124,6 +128,7 @@ naav-bins/
     ├── lib/
     │   ├── rewards.js         deposit / redemption decisions (pure)
     │   ├── binQr.js           signed and rotating QR codes, device keys
+    │   ├── emailCheck.js      sign-up email check (format, typos, disposable, MX)
     │   ├── geo.js             geofence, route optimisation
     │   ├── imageHash.js       perceptual hash
     │   ├── leagues.js         streaks, badges, challenges, standings
@@ -144,7 +149,10 @@ naav-bins/
 2. **Authentication → Sign In / Providers → Email:** enabled, with **Confirm email** on. Minimum password length 8.
 3. **Authentication → URL Configuration:** Site URL `https://naav-bins.vercel.app`; Redirect URLs `https://naav-bins.vercel.app/**` and `http://localhost:5173/**`.
 4. **Social providers (optional):** enable Google, Facebook and LinkedIn (OIDC) and register `https://<project-ref>.supabase.co/auth/v1/callback` with each provider.
-5. **Emails:** for real use, add a custom SMTP sender under Authentication → Emails → SMTP Settings.
+5. **Emails and rate limits:** Supabase's built-in email sender allows only a handful of auth emails per hour **for the whole project**, which causes "too many emails were sent" errors after a few sign-ups. To lift it:
+   1. Authentication → Emails → **SMTP Settings**: enable custom SMTP. A free option is Gmail (host `smtp.gmail.com`, port `465`, your Gmail address as username, a [Google app password](https://myaccount.google.com/apppasswords) as password); Brevo or Resend also have free tiers.
+   2. Authentication → **Rate Limits**: raise *Rate limit for sending emails* (e.g. 30 per hour). This field is locked until custom SMTP is on.
+   3. Authentication → Providers → Email: keep the minimum interval between emails to the same address at **60 seconds**. The app shows a matching 60 s countdown on its "Resend link" button.
 6. **Campus data:** edit `campus_groups` (departments, hostels), `reward_catalog` (credits and where they are claimed) and the bins' `stream`, `lat`, `lng` and `capacity_items` to match your campus.
 
 ### 2. Backend (`server/`)
@@ -291,6 +299,78 @@ Change it only if the secret has leaked (committed, shared or shown on screen). 
 
 Never commit `server/.env`; keep `QR_SECRET` empty in `.env.example`.
 
+## Managing bins (add, update, move, remove)
+
+Bins live in the `bins` table in Supabase. The admin console edits existing bins (status, stream, capacity, zone, QR mode, fill), but adding, moving and deleting are done in Supabase: **SQL Editor → New query**, or **Table Editor → bins** if you prefer a form.
+
+### Get a location's coordinates
+
+In Google Maps, right-click the exact spot where the bin stands and click the coordinates at the top of the menu to copy them (e.g. `12.96354, 77.50512`). The first number is `lat`, the second `lng`. Be accurate: scans are accepted only within about 50 m of this point.
+
+### Add a bin
+
+```sql
+insert into public.bins (id, name, lat, lng, status, stream, zone, capacity_items, qr_mode)
+values ('bin_library', 'Library Bin', 12.96354, 77.50512, 'Active', 'station', 'Library block', 200, 'static');
+```
+
+| Column | Meaning |
+|---|---|
+| `id` | Permanent unique ID: letters, digits, `_` or `-`, no spaces. It is baked into the QR code, so **never change it**. |
+| `name` | Name shown to users and admins |
+| `lat`, `lng` | Location (see above) |
+| `status` | `Active`, `Full` or `Inactive` (use `Inactive` until the bin is installed) |
+| `stream` | `station` (multi-compartment, accepts every stream), or a single BBMP stream: `dry`, `wet`, `reject` |
+| `zone` | Optional label, e.g. `Hostel block A` |
+| `capacity_items` | Roughly how many items fill it; used for the fill estimate (default 200) |
+| `qr_mode` | `static` (printed sticker) or `dynamic` (rotating code on a screen) |
+
+Then give it a QR code:
+- **Printed:** `cd server && npm run generate:qr`, open `server/bin-qr-codes.html` and print the new bin's code. Your local `server/.env` must have the **same `QR_SECRET` as Render**.
+- **Screen:** console → **Bins → Bin screen setup** for the bin, open the link on its tablet, then set its QR mode to *Live rotating QR*.
+
+Refresh the console: the bin appears in the bins table, the fleet map and the public bin map. Scan it once at the spot to confirm.
+
+### Update a bin
+
+- **Status, stream, capacity, zone, QR mode, fill level:** console → **Bins → Settings** (gear icon), or the **Partly full / Full / Emptied** buttons. No SQL needed.
+- **Rename:**
+
+  ```sql
+  update public.bins set name = 'Main Library Bin' where id = 'bin_library';
+  ```
+
+### Move a bin to a new location
+
+```sql
+update public.bins set lat = 12.96410, lng = 77.50633, zone = 'New block' where id = 'bin_library';
+```
+
+The QR code stays the same (it contains the `id`, not the location), so the sticker or screen simply moves with the bin. Past deposits keep their history.
+
+### Remove a bin
+
+**Prefer retiring it** — it disappears from scanning and the collection route but keeps its history in reports:
+
+```sql
+update public.bins set status = 'Inactive' where id = 'bin_library';
+```
+
+(or console → **Bins → Settings → Status: Inactive**). Remove its sticker or screen so nobody tries to scan it.
+
+**Delete permanently** only for a bin added by mistake:
+
+```sql
+delete from public.bins where id = 'bin_library';
+```
+
+Past deposits and collections are kept (they store the bin's id and name), but the bin vanishes from every map and report filter, and its QR code stops working. Do not reuse a deleted bin's `id` for a different bin: its old printed codes would become valid again.
+
+### Other locations
+
+- **Collection depot** (where routes start): set `DEPOT_LAT` / `DEPOT_LNG` in Render's environment.
+- **Departments and hostels** (for leagues): add, rename or deactivate rows in the `campus_groups` table.
+
 ## API
 
 | Method | Path | Access |
@@ -310,6 +390,7 @@ Never commit `server/.env`; keep `QR_SECRET` empty in `.env.example`.
 | GET/POST | `/api/admin/redemptions`, `/api/admin/redemptions/status` | admin |
 | GET/POST | `/api/admin/rewards`, `/api/admin/rewards/rule`, `/api/admin/rewards/item` | admin |
 | GET | `/api/device/hello`, POST `/api/device/telemetry` | bin device key |
+| POST | `/api/auth/check-email` | public, rate-limited: can this address receive the confirmation link? |
 | GET | `/api/bins`, `/api/leaderboard`, `/api/leagues`, `/api/campus-groups`, `/api/stats`, `/api/rewards/catalog` | public |
 
 Errors return `{ error, message, i18n: { key, params } }`, so the app can show them in the user's language.

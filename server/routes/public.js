@@ -3,11 +3,23 @@
 const { publicCatalog, computeImpact } = require('../lib/rewards');
 const { istWeek, computeStandings, computeIndividuals } = require('../lib/leagues');
 const { binFill } = require('../lib/operations');
+const { checkEmail } = require('../lib/emailCheck');
 
 const MIN = 60 * 1000;
 
 module.exports = function publicRoutes(ctx) {
-    const { app, supabase, store, fail, caches } = ctx;
+    const { app, supabase, store, fail, caches, limiters } = ctx;
+
+    // REGISTRATION EMAIL CHECK: format, typos, throwaway inboxes and whether the domain receives mail.
+    // Runs before Supabase sends the confirmation link, so dummy addresses never get one.
+    app.post('/api/auth/check-email', limiters.emailCheck, async (req, res) => {
+        const result = await checkEmail(req.body && req.body.email);
+        if (result.ok) return res.json({ status: 'ok' });
+        if (result.reason === 'typo') return fail(res, 400, 'Did you mean {suggestion}? Please check the spelling of your email address.', { suggestion: result.suggestion });
+        if (result.reason === 'disposable') return fail(res, 400, 'Temporary or throwaway email addresses are not allowed. Please use your own email.');
+        if (result.reason === 'no_mail') return fail(res, 400, 'This email domain cannot receive mail. Please check your email address.');
+        return fail(res, 400, 'Please enter a valid email address.');
+    });
 
     // REWARD TABLE + CATALOGUE: read from the database (single source of truth).
     app.get('/api/rewards/catalog', async (req, res) => {
