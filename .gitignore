@@ -1,59 +1,38 @@
-# Ignore compiled Python files
-*.pyc
-__pycache__/
-
-# Ignore temporary files
-*.tmp
-temp/
-
-# Ignore log files
-*.log
-logs/
-
-# Ignore build artifacts
-build/
-dist/
-temp_folder/
+# Dependencies (installed with `npm ci`, never committed)
 node_modules/
 
-# Ignore sensitive or local configuration files
-.env
-config.local.js
-
-# Ignore OS-specific files
-.DS_Store
-Thumbs.db
-
-# Exclude a specific file from being ignored, even if it matches a pattern
-!important_file.log
-
-# Ignore all files in a directory except a specific one
-my_data/*
-!my_data/keep_this.txt
-build/output.txt
-*.log
-!important.log
-
-node_modules
-server/serviceAccountKey.json
-.env
-# Dependencies
-node_modules/
-**/node_modules/
-
-# Environment files and secrets
+# Secrets and local environment. Only the .env.example templates are committed.
 .env
 .env.*
 !.env.example
+*.local
+serviceAccountKey.json
+*.pem
+*.key
 
 # Build output
 dist/
+dist-ssr/
 build/
+coverage/
 
-# Python
-.venv/
-__pycache__/
-*.pyc
-
-# Generated printable bin QR sheet
+# Generated printable bin QR sheet (contains signed bin codes)
 server/bin-qr-codes.html
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.sw?
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Deployment tool folders
+.vercel/

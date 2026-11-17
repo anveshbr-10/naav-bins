@@ -205,7 +205,7 @@ app.post('/api/scan/start', verifyToken, scanLimiter, async (req, res) => {
     if (!QR_SECRET) return fail(res, 503, 'Bin verification is not configured on the server.');
 
     const binId = verifyBinQrPayload(req.body && req.body.qr, QR_SECRET);
-    if (!binId) return fail(res, 400, 'This is not a valid Smart Bin QR code.');
+    if (!binId) return fail(res, 400, 'This is not a valid Naav Bins QR code.');
 
     try {
         const { data: bin, error } = await supabase

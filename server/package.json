@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "generate:qr": "node scripts/generate-bin-qr.js"
+    "dev": "node --watch index.js",
+    "generate:qr": "node scripts/generate-bin-qr.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -17,8 +18,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "nodemon": "^3.1.11"
+    "jsonwebtoken": "^9.0.2"
   },
   "engines": {
     "node": "20.x"

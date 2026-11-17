@@ -48,7 +48,7 @@ async function main() {
   figure { margin: 0; padding: 16px; border: 1px dashed #999; text-align: center; break-inside: avoid; }
   img { width: 100%; max-width: 240px; }
 </style></head>
-<body><h1>Smart Bin QR codes</h1><main>${cards.join('')}</main></body></html>`);
+<body><h1>Naav Bins QR codes</h1><main>${cards.join('')}</main></body></html>`);
 
     console.log(`\n✅ Wrote ${bins.length} QR code(s) to ${out}`);
 }

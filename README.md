@@ -35,19 +35,27 @@ Browser (React + Vite, hosted on Vercel)
 
 ```text
 naav-bins/
-├── client/smartbin/            React app (Vite, Tailwind)
+├── .github/
+│   ├── workflows/ci.yml        tests, lint, build and audit on every push / PR
+│   └── dependabot.yml          weekly dependency update PRs
+├── client/smartbin/            React app (Vite, Tailwind, installable PWA)
 │   ├── src/
 │   │   ├── supabase.js         Supabase client (publishable key) + auth helpers
 │   │   ├── AuthProvider.jsx    session + profile/role for the whole app
 │   │   ├── auth.jsx            sign-in / sign-up screen (incl. social buttons)
 │   │   ├── authPages.jsx       auth callback, forgot password, reset password
 │   │   ├── api.js              API client (adds the access token)
+│   │   ├── layout.jsx          shared navbar, footer, phone bottom bar
+│   │   ├── brand.jsx           product name and logo
 │   │   └── …                   dashboard, scanner, map, leaderboard, admin, about
+│   ├── public/                 logo, PWA manifest, service worker, app icons
+│   ├── scripts/                generate-icons.mjs (rebuilds the PNG app icons)
 │   └── vercel.json             single-page-app rewrites (deep links, email links)
 └── server/                     Express API
     ├── index.js                routes + token verification
     ├── lib/                    rewards rules, signed QR codes, profile store
     ├── scripts/                generate-bin-qr.js (printable bin QR sheet)
+    ├── test/                   unit tests for rewards, redemptions, QR signing, balance writes
     └── supabase/schema.sql     database schema, triggers and security
 ```
 
@@ -69,8 +77,8 @@ naav-bins/
 ```bash
 cd server
 cp .env.example .env      # fill in SUPABASE_URL, SUPABASE_SECRET_KEY, JWT_SECRET, QR_SECRET, CORS_ORIGINS
-npm install
-npm run dev               # or: npm start
+npm ci
+npm run dev               # restarts on file changes (node --watch); production: npm start
 ```
 
 Requires Node.js 20. Set the same variables on Render.
@@ -80,9 +88,25 @@ Requires Node.js 20. Set the same variables on Render.
 ```bash
 cd client/smartbin
 cp .env.example .env.local   # VITE_API_URL (and optionally the Supabase URL / publishable key)
-npm install
+npm ci
 npm run dev                  # http://localhost:5173
 ```
+
+## Tests and CI
+
+```bash
+cd server && npm test             # money logic: rewards, redemptions, refunds, double-spend, QR signatures
+cd client/smartbin && npm test    # formatting helpers
+cd client/smartbin && npm run lint && npm run build
+```
+
+Tests use Node's built-in test runner, so there is nothing extra to install. GitHub Actions runs all of the above, plus `npm audit` on production dependencies, for every push to `main` and every pull request. Keep the check green before merging.
+
+## Repository hygiene
+
+- Never commit `node_modules/`, `dist/`, `.env` files or generated QR sheets; `.gitignore` covers them. Commit only `.env.example` templates.
+- Install with `npm ci` (exact versions from `package-lock.json`). Add packages inside `server/` or `client/smartbin/`, never at the repository root.
+- `client/smartbin` overrides `node-fetch` to a patched 2.x release: it is only pulled in by the old TensorFlow version that Teachable Machine requires.
 
 ## Admin access
 
