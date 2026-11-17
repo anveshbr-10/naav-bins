@@ -2,6 +2,30 @@
 
 Naav Bins is a smart waste-segregation platform for campuses in Bengaluru. People scan the QR code on a smart bin (printed, or a live rotating code on the bin's screen). They then show the item to their phone camera, and an AI model identifies the material (Plastic, Metal, Paper / Cardboard, Glass, Organic or Other Trash). The app tells them which BBMP stream (dry, wet or reject) and which bin the item belongs in. Every correctly sorted item earns wallet money and Eco-Points, which can be spent as canteen, stationery or print-centre credits or withdrawn to UPI. The whole app is available in English, ಕನ್ನಡ and हिन्दी.
 
+**Live app:** [naav-bins.vercel.app](https://naav-bins.vercel.app) · API hosted on Render · database and auth on Supabase.
+
+## Why Naav Bins
+
+Most campus waste ends up mixed, even though BBMP rules require dry, wet and reject waste to be separated at source. Mixed bins are hard to recycle, collection crews have no idea which bins are full, and students get no feedback or reason to sort correctly. Naav Bins tackles all three:
+
+- **Guidance at the moment of disposal:** the phone identifies the item and names the right stream and bin.
+- **A reason to care:** every correct item earns money and points, and campus leagues turn sorting into a friendly competition between departments and hostels.
+- **Data for the people who run the bins:** fill levels, contamination rates and an optimised collection route, so crews empty the bins that need it instead of following a fixed round.
+- **Trustworthy rewards:** signed and rotating QR codes, a geofence, rate limits and duplicate-photo detection stop people farming money without sorting anything.
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, Vite 7, Tailwind CSS 3, React Router 7, installable PWA with light and dark themes |
+| AI | Teachable Machine image model (TensorFlow.js), running entirely on the phone |
+| Maps and charts | Leaflet (bin map, fleet map, collection route), Recharts (dashboards) |
+| QR | `qrcode` (bin screens and printed sheets), camera QR scanning in the browser |
+| Backend | Node.js 20, Express 5 |
+| Database and auth | Supabase Postgres (Row Level Security, transactional SQL functions) and Supabase Auth (email, Google, Facebook, LinkedIn) |
+| Hosting | Vercel (frontend), Render (API), Supabase (data) |
+| Quality | Node test runner, ESLint, translation coverage checks, GitHub Actions CI |
+
 ## Architecture
 
 ```text
@@ -27,6 +51,14 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - **The browser cannot reach the data directly:** Row Level Security blocks every table. Only the API, which uses the secret key, reads and writes them.
 - **The reward table lives in the database:** `reward_rules` (reward, points, BBMP stream, weight and CO₂ factors per material) and `reward_catalog` (campus credits). The API reads them and the app fetches them from the API. Admins edit them in the console, with no deploy needed.
 - **Money moves atomically:** each deposit, redemption, admin decision and challenge bonus runs in one Postgres transaction (`naav_apply_deposit`, `naav_apply_redemption`, `naav_set_redemption_status`, `naav_claim_challenge`). The balance update is a compare-and-swap, so concurrent requests cannot double-spend or slip past the cooldown.
+
+## How a deposit works
+
+1. **Scan the bin.** The user scans the bin's QR code. The API checks the signature (or the rotating code for live bins), confirms the bin is Active, and checks the phone's GPS fix is within the geofence. It then issues a short-lived scan session.
+2. **Show the item.** The camera feeds the on-device AI model, which names the material. Nothing but a 32×32 grayscale thumbnail leaves the phone.
+3. **Get guidance.** The app shows the BBMP stream and bin colour. If the bin is for a different stream, the user is told where to go and nothing is rewarded.
+4. **Earn.** The API re-checks every rule (session, cooldown, daily cap, duplicate photo, blocked user) and records the item and the reward in one transaction. Wallet money, Eco-Points, streaks, badges and league standings update straight away.
+5. **Spend.** Points become campus credits claimed at a counter with a one-time code, or wallet money is withdrawn to UPI after an admin approves it.
 
 ## Features
 
@@ -57,6 +89,11 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - Fraud flags with dismiss / confirm / confirm-and-block. Blocked users cannot earn.
 - Redemption queue (pay / reject / claim / cancel), users with impact and flags, CSV export, and giving counter staff the vendor role.
 - Reward table and campus-credit catalogue editor.
+- One-click fill marking per bin: **Partly full** (60%, stays open), **Full** (100%, closed to deposits and added to the route) and **Emptied** (resets to 0% and records the collection). See [Bin fill levels and status](#bin-fill-levels-and-status).
+
+**Navigation and sessions**
+- Every page (except the landing page and the bin kiosk screen) has an in-app **Back** button. It returns to the previous page on the site or, if there is none, to the visitor's home page (dashboard, operations console or counter), so nobody depends on the browser's own back control.
+- **Log out** clears the pages visited in that tab: the browser's Back then leaves the site instead of reopening the dashboard or console. Protected pages always redirect to login once the session is gone.
 
 **Voucher counter (vendors and admins):** `/counter`. Look up a code and mark it used; each code works once.
 
@@ -76,7 +113,10 @@ naav-bins/
 │   │   ├── binMap.jsx          bin map with stream filters and fill levels
 │   │   ├── binDisplay.jsx      the bin's screen: rotating QR code
 │   │   ├── counter.jsx         voucher counter for canteen / store staff
+│   │   ├── layout.jsx          shared page frame: navbar, bottom bar, footer
+│   │   ├── nav.jsx, logout.js  in-app Back button; logout that clears the tab's history
 │   │   └── admin/              operations console (fleet map, bins, flags, redemptions, users, rewards)
+│   │       └── fill.js         fill-level colour bands shared by the bins table and fleet map
 │   └── scripts/i18n-sync.mjs  extract strings, check and machine-translate translations
 └── server/                    Express API
     ├── index.js               configuration, auth middleware, rate limits
@@ -158,6 +198,39 @@ curl -X POST https://<api>/api/device/telemetry -H "Content-Type: application/js
 ```
 
 Measured weights replace the per-material estimates in every impact figure. Bins without sensors get a fill estimate from items deposited since they were last emptied.
+
+## Bin fill levels and status
+
+Each bin has a **status** (Active, Full or Inactive) and a **fill level** (0–100%). They are kept consistent everywhere: the bins table, the fleet map, the public bin map and the collection route.
+
+**Where the fill level comes from**, highest priority first:
+
+| Source | Rule |
+|---|---|
+| Status Full | A bin marked Full always reports 100%. |
+| Sensor | A sensor reading from the last 6 hours. |
+| Manual | A level set by an admin (**Partly full**, **Full** or the settings form). It holds until the bin is emptied; items deposited since can only raise it. |
+| Estimate | Items deposited since the bin was last emptied, divided by its capacity. |
+
+**Colours** (shared by the bins table and the fleet map's fill layer):
+
+| Fill | Colour | Meaning |
+|---|---|---|
+| under 50% | green | plenty of space |
+| 50–79% | orange | partly full |
+| 80% and over | red | full or nearly full; due for collection |
+| Inactive bin | grey, no percentage | out of service; not scannable and not on the route |
+
+**What each admin action stores in Supabase** (the `bins` table):
+
+| Action | Stored |
+|---|---|
+| Partly full | `status = Active`, `fill_level = 60`, `fill_source = manual`, `fill_updated_at = now` |
+| Full | `status = Full`, `fill_level = 100`, `fill_source = manual`, `fill_updated_at = now` |
+| Emptied | `fill_level = 0`, `last_emptied_at = now`, Full → Active, and a new `bin_collections` row with weight, contamination and notes |
+| Settings | status, stream, QR mode, capacity, zone and optional fill level |
+
+Colours, labels and the Full-means-100% rule are computed when the data is read, so the screen can never drift from what is stored. A sensor reading overrides a manual level: at 95% or more it marks the bin Full, and under 50% it reopens a Full bin.
 
 ## Tests and CI
 
