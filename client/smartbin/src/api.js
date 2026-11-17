@@ -31,7 +31,8 @@ export function getSession() {
   try {
     const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
     const payload = JSON.parse(atob(part.padEnd(part.length + ((4 - (part.length % 4)) % 4), '=')));
-    if (!payload.exp || payload.exp * 1000 <= Date.now()) throw new Error('expired');
+    // Only drop tokens that are clearly expired; the server remains the authority on validity.
+    if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) throw new Error('expired');
     return { email: payload.email, role: payload.role };
   } catch {
     localStorage.removeItem('token');
