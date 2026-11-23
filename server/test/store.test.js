@@ -7,7 +7,7 @@ const { planWasteDeposit, planRedemption, planRedemptionStatusChange, normalizeR
 
 const RULES = normalizeRules([{ waste_type: 'Plastic', reward_inr: 25, points: 125, stream: 'dry', est_item_kg: 0.025 }]);
 const CATALOG = normalizeCatalog([
-    { item: 'Canteen Coupon ₹20', type: 'points', cost: 200 },
+    { item: 'Canteen Coupon ₹20', type: 'points', cost: 200, vendor_id: 'utsav-cafe' },
     { item: 'Bank Transfer', type: 'money', cost: 100 },
 ]);
 const NOW = Date.parse('2026-11-17T10:00:00.000Z');

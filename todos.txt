@@ -1,9 +1,6 @@
 Yet to complete tasks
 
-1. Camera flash should on depending on lighting
-2. Redeem buttons redirecting to those websites (Done)
-3. Maps of their campus (Done)
-4. UI even better with dark theme
-5. Bin full or active status color red or green (Done)
-6. About Page in Landing (Done)
-7. Contact Form in Landing with email trigger (Done)
+1. Vendor accounts for specific vendors, like (Utsav Cafe Canteen, MTR Stakll, College Stationary, College Xerox & Print) <- right now it is very simple and has to be enhanced and strict
+2. for example, the print takes 50 pts and credits 20rs, but a student may need only 1re or2rs or 5rs for print or a photocopy or just 10rs for a book or maybe 70rs for a record book, so crediting 20rs at once and claims only for printout of 2rs but the remaining 18rs is gone forever, that needs to be changed as the mathematical logic is not applying properly
+3. add on point for point number 2, this logic applies all the vendors including the canteen and the mtr snacks stall, like the student may want something lower than what is claimed as redemption, the remaining amount goes in vain that shouldnt happen
+4. instead of a static amount of credit which we give to the users, cant we do things dynamically, like for example, upi platforms tell they give cashback of a certain amount but they always give amount or points very less than what they assure us to give but ultimately after completing the specified number of transactions they add all the cashback or points they provide to what was assured as their main intension was to have transactions and wanted people to use their application everytime, even we will implement a very similar idea in our project.

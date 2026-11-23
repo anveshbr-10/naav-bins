@@ -63,6 +63,8 @@ const config = {
     // Start point of the collection route (e.g. the waste yard). Defaults to the first bin due.
     DEPOT: Number.isFinite(numFromEnv('DEPOT_LAT', NaN)) && Number.isFinite(numFromEnv('DEPOT_LNG', NaN))
         ? { lat: numFromEnv('DEPOT_LAT', 0), lng: numFromEnv('DEPOT_LNG', 0) } : null,
+    // Campus credits: how many Eco-Points make ₹1 (used for vendor settlement).
+    POINTS_PER_RUPEE: Math.max(1, intFromEnv('POINTS_PER_RUPEE', 10)),
 };
 if (!config.GEOFENCE_ENABLED) console.warn('⚠️  GEOFENCE_ENABLED=false: users can scan bins from anywhere.');
 

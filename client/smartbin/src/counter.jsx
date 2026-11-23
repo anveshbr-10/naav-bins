@@ -1,28 +1,40 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Search, Loader2, CheckCircle2, XCircle, Ticket } from 'lucide-react';
+import { Store, Search, Loader2, CheckCircle2, XCircle, Ticket, MapPin, ListChecks } from 'lucide-react';
 import AppShell from './layout';
 import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
-import { useI18n, tk } from './i18n';
+import { useI18n, tk, localized } from './i18n';
 import { formatDateTime } from './format';
 import { STATUS_LABEL } from './waste';
 
-// Canteen / stationery / print-centre counter: look up a student's campus-credit code and mark it used.
-// Each code can be claimed once (enforced in the database).
+// Canteen / snack stall / stationery / print-centre counter: look up a student's campus-credit code and
+// mark it used. Staff belong to one counter and only see vouchers issued for it; each code can be claimed
+// once and each counter has a daily limit (all enforced by the API and the database).
 export default function Counter() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [code, setCode] = useState('');
   const [voucher, setVoucher] = useState(null);
   const [state, setState] = useState('idle'); // idle | looking | claiming | claimed
   const [error, setError] = useState(null);
+  const [me, setMe] = useState(null); // { vendor, today }
+  const [meError, setMeError] = useState(null);
 
-  const handleAuth = (err) => {
-    if (apiStatus(err) === 401) { signOut().then(() => navigate('/login')); return true; }
+  const handleAuth = useCallback((err) => {
+    const status = apiStatus(err);
+    if (status === 401) { signOut().then(() => navigate('/login')); return true; }
     return false;
-  };
+  }, [navigate, signOut]);
+
+  const loadMe = useCallback(() => {
+    api.get('/api/counter/me')
+      .then((res) => { setMe(res.data); setMeError(null); })
+      .catch((err) => { if (!handleAuth(err)) setMeError(apiErrorMessage(err, tk('Could not load this counter.'))); });
+  }, [handleAuth]);
+
+  useEffect(() => { loadMe(); }, [loadMe]);
 
   const normalized = code.trim().toUpperCase().replace(/\s+/g, '');
 
@@ -49,6 +61,7 @@ export default function Counter() {
       await api.post(`/api/counter/voucher/${encodeURIComponent(voucher.code)}/claim`);
       setVoucher({ ...voucher, status: 'Claimed', processed_at: new Date().toISOString() });
       setState('claimed');
+      loadMe();
     } catch (err) {
       if (handleAuth(err)) return;
       setError(apiErrorMessage(err, tk('Could not mark this code as used.')));
@@ -64,10 +77,16 @@ export default function Counter() {
         <div className="flex items-center gap-3 mb-6">
           <div className="bg-amber-100 text-amber-700 p-3 rounded-xl"><Store aria-hidden="true" /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{t('Voucher counter')}</h1>
-            <p className="text-sm text-gray-500">{t('Check a student\'s campus-credit code and mark it as used.')}</p>
+            <h1 className="text-2xl font-bold text-gray-900">{me?.vendor ? localized(me.vendor, 'name', lang) : t('Voucher counter')}</h1>
+            <p className="text-sm text-gray-500">
+              {me?.vendor
+                ? <span className="inline-flex items-center gap-1"><MapPin size={12} aria-hidden="true" /> {me.vendor.location || t('Campus counter')}</span>
+                : me ? t('Admin: all counters') : t('Check a student\'s campus-credit code and mark it as used.')}
+            </p>
           </div>
         </div>
+
+        {meError && <p role="alert" className="mb-4 text-sm text-red-600 bg-red-50 rounded-lg p-3">{meError}</p>}
 
         <form onSubmit={lookup} className="flex gap-2">
           <label className="sr-only" htmlFor="voucher-code">{t('Voucher code')}</label>
@@ -118,6 +137,30 @@ export default function Counter() {
               </button>
             )}
             {state === 'claimed' && <p role="status" className="mt-4 text-sm font-semibold text-green-700">{t('Done. The code can no longer be used.')}</p>}
+          </div>
+        )}
+
+        {me && (
+          <div className="mt-8">
+            <h2 className="font-bold text-gray-800 flex items-center gap-2 mb-1"><ListChecks size={18} aria-hidden="true" /> {t('Claimed today')}</h2>
+            <p className="text-xs text-gray-500 mb-3">
+              {me.vendor
+                ? t('{n} of {limit} vouchers today', { n: me.today.length, limit: me.vendor.dailyClaimLimit })
+                : t('{n} vouchers today', { n: me.today.length })}
+            </p>
+            {me.today.length === 0 ? <p className="text-sm text-gray-400">{t('No vouchers claimed yet today.')}</p> : (
+              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-xl bg-white">
+                {me.today.map((c) => (
+                  <li key={c.code} className="p-3 flex justify-between gap-3 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800 truncate">{c.item}</p>
+                      <p className="text-xs text-gray-500 font-mono">{c.code} · {c.userName || t('a student')}</p>
+                    </div>
+                    <span className="text-xs text-gray-500 flex-shrink-0">{formatDateTime(c.processed_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>

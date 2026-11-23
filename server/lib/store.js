@@ -40,7 +40,7 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         if (rulesCache && rulesCache.expires > now()) return rulesCache.value;
         const [rules, catalog] = await Promise.all([
             supabase.from('reward_rules').select('*').order('sort'),
-            supabase.from('reward_catalog').select('*').order('sort'),
+            supabase.from('reward_catalog').select('*, vendors(active)').order('sort'),
         ]);
         if (rules.error) throw rules.error;
         if (catalog.error) throw catalog.error;
@@ -170,6 +170,27 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         return new Set((data || []).map(r => r.challenge_id));
     }
 
+    // ---------- vendors (campus counters) ----------
+    async function getVendor(id) {
+        if (typeof id !== 'string' || !id) return null;
+        const { data, error } = await supabase.from('vendors').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        return data;
+    }
+
+    // Vouchers this counter has claimed since sinceMs (for the daily limit and the counter's list).
+    async function vendorClaimsSince(vendorId, sinceMs, { countOnly = false } = {}) {
+        let q = supabase.from('redemptions')
+            .select(countOnly ? 'code' : 'code, item, cost, processed_at, processed_by, user_profiles(name)', countOnly ? { count: 'exact', head: true } : undefined)
+            .eq('type', 'points').eq('status', 'Claimed')
+            .gte('processed_at', new Date(sinceMs).toISOString());
+        if (vendorId) q = q.eq('vendor_id', vendorId);
+        if (!countOnly) q = q.order('processed_at', { ascending: false }).limit(200);
+        const { data, count, error } = await q;
+        if (error) throw error;
+        return countOnly ? (count || 0) : (data || []);
+    }
+
     // ---------- fraud flags ----------
     // Best effort: never blocks or fails the request that triggered it. The same user + kind + bin is
     // recorded at most once per 10 minutes, so a retry loop does not flood the console.
@@ -201,6 +222,7 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         logsSince, previousHashes, applyDeposit,
         applyRedemption, getRedemption, changeRedemptionStatus,
         claimChallenge, claimedChallengeIds,
+        getVendor, vendorClaimsSince,
         recordFlag,
     };
 }

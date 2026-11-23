@@ -1,8 +1,11 @@
-// Operations console (admins) and voucher counter (admins + canteen/store vendors).
+// Operations console (admins), vendor management, and the voucher counter (admins + counter staff).
 
 const { computeImpact, planRedemptionStatusChange, ADMIN_STATUSES, BIN_STREAMS } = require('../lib/rewards');
 const { summarizeFleet, planCollectionRoute } = require('../lib/operations');
 const { deriveDeviceKey } = require('../lib/binQr');
+const {
+    istDayStart, planCounterAccess, planVoucherAccess, planDailyLimit, parseVendorInput, summarizeSettlement, VENDOR_ID_RE,
+} = require('../lib/vendors');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BIN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -19,6 +22,17 @@ module.exports = function adminRoutes(ctx) {
     const { app, supabase, store, config, fail, str, verifyToken, loadProfile, requireAdmin, requireCounter, limiters, caches } = ctx;
     const admin = [verifyToken, loadProfile, requireAdmin];
     const adminWrite = [...admin, limiters.write];
+
+    // Counter staff: role 'vendor' AND linked to an active vendor (read fresh on every request).
+    // Sets req.vendor (null for admins, who may act at any counter).
+    async function loadCounter(req, res, next) {
+        const vendor = req.profile && req.profile.role === 'vendor' ? await store.getVendor(req.profile.vendor_id) : null;
+        const access = planCounterAccess(req.profile, vendor);
+        if (access.reject) return fail(res, access.reject.code, access.reject.template, access.reject.params);
+        req.vendor = access.vendor;
+        next();
+    }
+    const counter = [verifyToken, loadProfile, requireCounter, loadCounter];
 
     // ---------------- overview ----------------
     app.get('/api/admin/overview', ...admin, async (req, res) => {
@@ -54,7 +68,7 @@ module.exports = function adminRoutes(ctx) {
     app.get('/api/admin/users', ...admin, async (req, res) => {
         const [users, material, open, flags, tables] = await Promise.all([
             supabase.from('user_profiles')
-                .select('id, email, name, role, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt')
+                .select('id, email, name, role, vendor_id, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt')
                 .order('createdAt', { ascending: true }),
             supabase.from('naav_user_material_stats').select('user_id, waste_type, items, weight_kg, measured_items, reward_inr'),
             supabase.from('redemptions').select('user_id, cost').eq('type', 'money').eq('status', 'Pending'),
@@ -85,7 +99,7 @@ module.exports = function adminRoutes(ctx) {
         const id = req.params.id;
         if (!UUID_RE.test(id)) return fail(res, 400, 'Invalid request');
         const [user, logs, redemptions, flags] = await Promise.all([
-            supabase.from('user_profiles').select('id, email, name, role, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt').eq('id', id).maybeSingle(),
+            supabase.from('user_profiles').select('id, email, name, role, vendor_id, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt').eq('id', id).maybeSingle(),
             supabase.from('waste_logs').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(100),
             supabase.from('redemptions').select('*').eq('user_id', id).order('created_at', { ascending: false }),
             supabase.from('fraud_flags').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(50),
@@ -106,13 +120,22 @@ module.exports = function adminRoutes(ctx) {
         res.json({ status: 'ok', user: data });
     });
 
-    // Give canteen / store staff the "vendor" role (counter page only), or take it away.
+    // Give canteen / store staff the "vendor" role for ONE active counter (counter page only), or take it away.
     app.post('/api/admin/users/:id/role', ...adminWrite, async (req, res) => {
         const id = req.params.id;
         const role = req.body && req.body.role;
         if (!UUID_RE.test(id) || !['user', 'vendor'].includes(role)) return fail(res, 400, 'Invalid request');
         if (id === req.user.id) return fail(res, 400, 'You cannot change your own account here.');
-        const { data, error } = await supabase.from('user_profiles').update({ role }).eq('id', id).neq('role', 'admin').select('id, role').maybeSingle();
+        let vendorId = null;
+        if (role === 'vendor') {
+            vendorId = str(req.body.vendorId);
+            if (!VENDOR_ID_RE.test(vendorId)) return fail(res, 400, 'Choose the counter this person works at.');
+            const vendor = await store.getVendor(vendorId);
+            if (!vendor) return fail(res, 404, 'Vendor not found');
+            if (!vendor.active) return fail(res, 400, 'This counter is switched off. Switch it on first.');
+        }
+        const { data, error } = await supabase.from('user_profiles').update({ role, vendor_id: vendorId })
+            .eq('id', id).neq('role', 'admin').select('id, role, vendor_id').maybeSingle();
         if (error) throw error;
         if (!data) return fail(res, 404, 'User not found');
         caches.leagues.clear();
@@ -133,9 +156,9 @@ module.exports = function adminRoutes(ctx) {
 
     // Pending -> Paid / Rejected (withdrawals), Issued -> Claimed / Cancelled (vouchers).
     // Rejected / Cancelled refund the user. Each decision applies once (status guard in SQL).
-    async function decide(req, res, code, status) {
+    async function decide(req, res, code, status, vendorId = null) {
         if (!CODE_RE.test(code) || !ADMIN_STATUSES.includes(status)) return fail(res, 400, 'Invalid request');
-        const outcome = await store.changeRedemptionStatus(code, r => planRedemptionStatusChange(r, { status }), req.user.email);
+        const outcome = await store.changeRedemptionStatus(code, r => planRedemptionStatusChange(r, { status, vendorId }), req.user.email);
         if (outcome.outcome === 'not_found') return fail(res, 404, 'Redemption not found');
         if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.template || outcome.message, outcome.params);
         if (outcome.outcome === 'conflict') return fail(res, 409, 'This redemption was already processed. Please refresh.');
@@ -147,20 +170,93 @@ module.exports = function adminRoutes(ctx) {
         decide(req, res, str(req.body && req.body.code), req.body && req.body.status));
 
     // ---------------- voucher counter (canteen / store staff) ----------------
-    app.get('/api/counter/voucher/:code', verifyToken, loadProfile, requireCounter, async (req, res) => {
+    // Staff see and claim only vouchers issued for their own counter, up to its daily limit.
+    const vendorView = v => (v ? {
+        id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels, dailyClaimLimit: v.daily_claim_limit,
+    } : null);
+
+    app.get('/api/counter/me', ...counter, async (req, res) => {
+        const claims = await store.vendorClaimsSince(req.vendor ? req.vendor.id : null, istDayStart(Date.now()));
+        res.json({
+            status: 'ok',
+            vendor: vendorView(req.vendor),
+            today: claims.map(({ user_profiles: u, ...c }) => ({ ...c, userName: u ? u.name : null })),
+        });
+    });
+
+    app.get('/api/counter/voucher/:code', ...counter, async (req, res) => {
         const code = str(req.params.code).toUpperCase();
         if (!CODE_RE.test(code)) return fail(res, 400, 'Enter a code like NB-ABCD-2345.');
         const { data, error } = await supabase.from('redemptions')
-            .select('code, item, type, cost, status, vendor, created_at, processed_at, processed_by, user_profiles(name)')
+            .select('code, item, type, cost, status, vendor, vendor_id, created_at, processed_at, processed_by, user_profiles(name)')
             .eq('code', code).maybeSingle();
         if (error) throw error;
-        if (!data || data.type !== 'points') return fail(res, 404, 'No voucher with this code.');
+        const access = planVoucherAccess(data, req.vendor);
+        if (access.reject) return fail(res, access.reject.code, access.reject.template, access.reject.params);
         const { user_profiles: u, ...voucher } = data;
         res.json({ status: 'ok', voucher: { ...voucher, userName: u ? u.name : null } });
     });
 
-    app.post('/api/counter/voucher/:code/claim', verifyToken, loadProfile, requireCounter, limiters.write, (req, res) =>
-        decide(req, res, str(req.params.code).toUpperCase(), 'Claimed'));
+    app.post('/api/counter/voucher/:code/claim', ...counter, limiters.write, async (req, res) => {
+        if (req.vendor) {
+            const claimedToday = await store.vendorClaimsSince(req.vendor.id, istDayStart(Date.now()), { countOnly: true });
+            const limit = planDailyLimit(req.vendor, claimedToday);
+            if (limit.reject) return fail(res, limit.reject.code, limit.reject.template, limit.reject.params);
+        }
+        return decide(req, res, str(req.params.code).toUpperCase(), 'Claimed', req.vendor ? req.vendor.id : null);
+    });
+
+    // ---------------- vendors (campus counters) ----------------
+    app.get('/api/admin/vendors', ...admin, async (req, res) => {
+        const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 7));
+        const since = new Date(Date.now() - days * DAY_MS).toISOString();
+        const [vendors, staff, claims, open] = await Promise.all([
+            supabase.from('vendors').select('*').order('sort').order('name'),
+            supabase.from('user_profiles').select('id, name, email, vendor_id').eq('role', 'vendor'),
+            supabase.from('redemptions').select('vendor_id, cost').eq('type', 'points').eq('status', 'Claimed').gte('processed_at', since).limit(100000),
+            supabase.from('redemptions').select('vendor_id').eq('type', 'points').eq('status', 'Issued').limit(100000),
+        ]);
+        for (const r of [vendors, staff, claims, open]) if (r.error) throw r.error;
+        const settlement = new Map(summarizeSettlement(vendors.data, claims.data, config.POINTS_PER_RUPEE).map(s => [s.vendorId, s]));
+        res.json({
+            status: 'ok',
+            days,
+            pointsPerRupee: config.POINTS_PER_RUPEE,
+            vendors: vendors.data.map(v => ({
+                ...v,
+                staff: staff.data.filter(s => s.vendor_id === v.id).map(s => ({ id: s.id, name: s.name, email: s.email })),
+                openVouchers: open.data.filter(o => o.vendor_id === v.id).length,
+                settlement: settlement.get(v.id),
+            })),
+        });
+    });
+
+    app.post('/api/admin/vendors', ...adminWrite, async (req, res) => {
+        const parsed = parseVendorInput(req.body);
+        if (parsed.reject) return fail(res, parsed.reject.code, parsed.reject.template, parsed.reject.params);
+        const { data, error } = await supabase.from('vendors').insert([parsed.values]).select('*').maybeSingle();
+        if (error && error.code === '23505') return fail(res, 409, 'A vendor with this ID already exists.');
+        if (error) throw error;
+        res.json({ status: 'ok', vendor: data });
+    });
+
+    app.post('/api/admin/vendors/:id', ...adminWrite, async (req, res) => {
+        const id = req.params.id;
+        if (!VENDOR_ID_RE.test(id)) return fail(res, 400, 'Invalid request');
+        const parsed = parseVendorInput(req.body, { partial: true });
+        if (parsed.reject) return fail(res, parsed.reject.code, parsed.reject.template, parsed.reject.params);
+        const { data, error } = await supabase.from('vendors')
+            .update({ ...parsed.values, updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'Vendor not found');
+        if (parsed.values.name) {
+            // Keep the "claim at" name on catalogue items in step (translations are edited in the database).
+            const { error: e2 } = await supabase.from('reward_catalog').update({ vendor: data.name }).eq('vendor_id', id);
+            if (e2) throw e2;
+            store.invalidateRewardTables();
+        }
+        res.json({ status: 'ok', vendor: data });
+    });
 
     // ---------------- fleet operations ----------------
     async function loadFleet(days) {

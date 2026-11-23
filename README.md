@@ -47,7 +47,7 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 
 - **One platform:** Supabase provides both authentication and the database.
 - **Every login has exactly one profile:** `user_profiles.id` references `auth.users.id`. A trigger creates the profile at sign-up, and deleting a user deletes their profile, logs and redemptions (`on delete cascade`).
-- **Roles live in one place:** `user_profiles.role` is `user`, `vendor` (canteen or store counter staff) or `admin`. The API reads it fresh on every request.
+- **Roles live in one place:** `user_profiles.role` is `user`, `vendor` (counter staff) or `admin`. A `vendor` account also carries `vendor_id`, the one campus counter it works at (a database constraint makes the two go together). The API reads both fresh on every request.
 - **The browser cannot reach the data directly:** Row Level Security blocks every table. Only the API, which uses the secret key, reads and writes them.
 - **The reward table lives in the database:** `reward_rules` (reward, points, BBMP stream, weight and CO₂ factors per material) and `reward_catalog` (campus credits). The API reads them and the app fetches them from the API. Admins edit them in the console, with no deploy needed.
 - **Money moves atomically:** each deposit, redemption, admin decision and challenge bonus runs in one Postgres transaction (`naav_apply_deposit`, `naav_apply_redemption`, `naav_set_redemption_status`, `naav_claim_challenge`). The balance update is a compare-and-swap, so concurrent requests cannot double-spend or slip past the cooldown.
@@ -87,7 +87,8 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - Per bin: fill level (sensor, manual or estimated from items since last emptied), items and weight (measured vs estimated), automatic contamination rate (wrong-stream share), audited contamination from collections, open flags, and a "mark emptied" form that records weight and contamination.
 - Bin settings (status, stream, capacity, zone, QR mode), bin-screen provisioning and key rotation.
 - Fraud flags with dismiss / confirm / confirm-and-block. Blocked users cannot earn.
-- Redemption queue (pay / reject / claim / cancel), users with impact and flags, CSV export, and giving counter staff the vendor role.
+- Redemption queue (pay / reject / claim / cancel), users with impact and flags, CSV export, and giving counter staff access to one specific counter.
+- **Vendors** tab: add, edit or switch off campus counters, see each counter's staff, unused vouchers and settlement (vouchers claimed, points, ₹ owed to the vendor) with CSV export.
 - Reward table and campus-credit catalogue editor.
 - One-click fill marking per bin: **Partly full** (60%, stays open), **Full** (100%, closed to deposits and added to the route) and **Emptied** (resets to 0% and records the collection). See [Bin fill levels and status](#bin-fill-levels-and-status).
 
@@ -99,7 +100,20 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - Every page (except the landing page and the bin kiosk screen) has an in-app **Back** button. It returns to the previous page on the site or, if there is none, to the visitor's home page (dashboard, operations console or counter), so nobody depends on the browser's own back control.
 - **Log out** clears the pages visited in that tab: the browser's Back then leaves the site instead of reopening the dashboard or console. Protected pages always redirect to login once the session is gone.
 
-**Voucher counter (vendors and admins):** `/counter`. Look up a code and mark it used; each code works once.
+**Campus counters (vendors)**
+
+Each counter on campus is a record in the `vendors` table. Four are created by default: **Utsav Cafe Canteen**, **MTR Snacks Stall**, **College Stationery** and **College Xerox & Print**. Every campus credit in the catalogue belongs to one counter, and so does every voucher issued for it.
+
+| Rule (enforced by the API and the database) | Effect |
+|---|---|
+| Staff belong to exactly one counter | `role = 'vendor'` requires `vendor_id`, and other roles cannot have one |
+| Staff only see their own counter's vouchers | A canteen code typed at the print centre is refused with "This voucher is for Utsav Cafe Canteen, not this counter." |
+| Each code works once | Status guard in `naav_set_redemption_status` |
+| Daily claim limit per counter | Default 300 vouchers per IST day, editable per counter; limits damage from a misused staff login |
+| Switching a counter off | Its staff are locked out at once, and its credits disappear from the students' catalogue |
+| Admins | Can act at any counter |
+
+**Voucher counter page:** `/counter` shows the counter's name and location, a code lookup, and the vouchers claimed there today against the daily limit.
 
 ## Project structure
 
@@ -116,10 +130,10 @@ naav-bins/
 │   │   ├── leaderboard.jsx     campus leagues
 │   │   ├── binMap.jsx          bin map with stream filters and fill levels
 │   │   ├── binDisplay.jsx      the bin's screen: rotating QR code
-│   │   ├── counter.jsx         voucher counter for canteen / store staff
+│   │   ├── counter.jsx         voucher counter: one counter per staff account, today's claims
 │   │   ├── layout.jsx          shared page frame: navbar, bottom bar, footer
 │   │   ├── nav.jsx, logout.js  in-app Back button; logout that clears the tab's history
-│   │   └── admin/              operations console (fleet map, bins, flags, redemptions, users, rewards)
+│   │   └── admin/              operations console (fleet map, bins, flags, redemptions, users, vendors, rewards)
 │   │       └── fill.js         fill-level colour bands shared by the bins table and fleet map
 │   └── scripts/i18n-sync.mjs  extract strings, check and machine-translate translations
 └── server/                    Express API
@@ -133,10 +147,12 @@ naav-bins/
     │   ├── imageHash.js       perceptual hash
     │   ├── leagues.js         streaks, badges, challenges, standings
     │   ├── operations.js      fill levels, contamination, collection plan
+    │   ├── vendors.js         counter access, voucher ownership, daily limits, settlement
     │   └── store.js           database access and transactional balance changes
     ├── scripts/generate-bin-qr.js   printable QR sheet (static bins)
     ├── supabase/schema.sql          base schema (accounts)
     ├── supabase/002_operations.sql  tables, functions and data migration for everything above
+    ├── supabase/003_vendors.sql     campus counters (vendors), staff ↔ counter link, vouchers tied to a counter
     └── test/                  unit tests
 ```
 
@@ -146,6 +162,8 @@ naav-bins/
 
 1. **Database:** in the SQL Editor run [`server/supabase/schema.sql`](server/supabase/schema.sql) (fresh installs only; ⚠️ it deletes all profiles and auth users), then run [`server/supabase/002_operations.sql`](server/supabase/002_operations.sql).
    **Existing deployments: run only `002_operations.sql`.** It is idempotent. It moves the JSON `logs` / `redemptions` from `user_profiles` into the new `waste_logs` / `redemptions` tables, then drops the JSON columns. Deploy the new API immediately after it, because the old API reads those columns.
+
+   Then run [`server/supabase/003_vendors.sql`](server/supabase/003_vendors.sql) (all installs, idempotent). It creates the campus counters, links catalogue items and existing vouchers to them, and records the counter on new redemptions. ⚠️ Old `vendor` accounts that are not linked to a counter are moved back to `user`: give them access again from **Users → (user) → Give counter access**. Deploy the new API right after it.
 2. **Authentication → Sign In / Providers → Email:** enabled, with **Confirm email** on. Minimum password length 8.
 3. **Authentication → URL Configuration:** Site URL `https://naav-bins.vercel.app`; Redirect URLs `https://naav-bins.vercel.app/**` and `http://localhost:5173/**`.
 4. **Social providers (optional):** enable Google, Facebook and LinkedIn (OIDC) and register `https://<project-ref>.supabase.co/auth/v1/callback` with each provider.
@@ -164,7 +182,7 @@ npm ci
 npm run dev               # restarts on file changes; production: npm start
 ```
 
-Requires Node.js 20. Set the same variables on Render. [`server/.env.example`](server/.env.example) documents every setting: geofence radius, cooldown, daily cap, photo-hash threshold, QR period and route depot.
+Requires Node.js 20. Set the same variables on Render. [`server/.env.example`](server/.env.example) documents every setting: geofence radius, cooldown, daily cap, photo-hash threshold, QR period, route depot and the points-to-rupee rate (`POINTS_PER_RUPEE`, default 10).
 
 ### 3. Frontend (`client/smartbin/`)
 
@@ -266,7 +284,7 @@ Register normally, confirm the email, then in the Supabase SQL Editor:
 update public.user_profiles set role = 'admin' where email = 'you@example.com';
 ```
 
-Sign out and back in to open the operations console. Admins give canteen or store staff the `vendor` role from **Users → Give counter access**. Vendors only see the voucher counter.
+Sign out and back in to open the operations console. To give canteen or store staff counter access, open **Users**, select the person, choose their counter and click **Give counter access**. Counter staff only see the voucher counter for that counter. Add or switch off counters in the **Vendors** tab.
 
 ## Bin QR codes (printed)
 
@@ -386,11 +404,13 @@ Past deposits and collections are kept (they store the bin's id and name), but t
 | POST | `/api/scan/start` | signed in: verify QR (signed / rotating) + geofence, start scan session |
 | POST | `/api/add-waste` | signed in: record an item (scan session + thumbnail) |
 | POST | `/api/redeem` | signed in: campus credit or UPI withdrawal |
-| GET | `/api/counter/voucher/:code`, POST `/api/counter/voucher/:code/claim` | vendor, admin |
+| GET | `/api/counter/me` | counter staff (own counter + today's claims), admin |
+| GET | `/api/counter/voucher/:code`, POST `/api/counter/voucher/:code/claim` | counter staff (own counter's vouchers only, daily limit), admin |
+| GET/POST | `/api/admin/vendors`, POST `/api/admin/vendors/:id` | admin: list with staff + settlement, create, update / switch off |
 | GET | `/api/admin/overview`, `/api/admin/ops`, `/api/admin/ops/route` | admin |
 | GET/POST | `/api/admin/bins/:id`, `/:id/empty`, `/:id/collections`, `/:id/device`, `/:id/rotate-key` | admin |
 | GET/POST | `/api/admin/flags`, `/api/admin/flags/:id/resolve` | admin |
-| GET/POST | `/api/admin/users`, `/api/admin/users/:id`, `/:id/block`, `/:id/role` | admin |
+| GET/POST | `/api/admin/users`, `/api/admin/users/:id`, `/:id/block`, `/:id/role` (`{ role: 'vendor', vendorId }` or `{ role: 'user' }`) | admin |
 | GET/POST | `/api/admin/redemptions`, `/api/admin/redemptions/status` | admin |
 | GET/POST | `/api/admin/rewards`, `/api/admin/rewards/rule`, `/api/admin/rewards/item` | admin |
 | GET | `/api/device/hello`, POST `/api/device/telemetry` | bin device key |

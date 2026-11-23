@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { Search, ArrowUpRight, Download, X, Ticket, Recycle, ShieldAlert, Ban, Store, Loader2, Scale } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
-import { useI18n, tk } from '../i18n';
+import { useI18n, tk, localized } from '../i18n';
 import useDialog from '../useDialog';
 import { formatCo2, formatCount, formatDate, formatDateTime, formatInr, formatKg } from '../format';
 import { STATUS_LABEL, WASTE_BY_NAME } from '../waste';
 import { useAdminData, useAuthErrorHandler } from './useAdminApi';
-import { Panel, Loading, LoadError, Pill, buttonGhost } from './ui';
+import { Panel, Loading, LoadError, Pill, buttonGhost, inputClass } from './ui';
 import { RedemptionActions } from './RedemptionsPanel';
 import { FLAG_INFO } from './flagInfo';
 
@@ -24,8 +24,9 @@ function csvCell(value) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function UserDrawer({ userId, onClose, onChanged }) {
-  const { t } = useI18n();
+function UserDrawer({ userId, vendors, onClose, onChanged }) {
+  const { t, lang } = useI18n();
+  const [vendorId, setVendorId] = useState('');
   const ref = useDialog(onClose);
   const handleAuthError = useAuthErrorHandler();
   const { status, data, reload } = useAdminData(`/api/admin/users/${userId}`);
@@ -47,6 +48,10 @@ function UserDrawer({ userId, onClose, onChanged }) {
   };
 
   const u = data?.user;
+  const vendorName = (id) => {
+    const v = vendors.find((x) => x.id === id);
+    return v ? localized(v, 'name', lang) : id || '—';
+  };
   return (
     <div className="fixed inset-0 z-[1050] flex justify-end bg-black/40" onClick={onClose}>
       <aside ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="user-detail-title"
@@ -55,7 +60,7 @@ function UserDrawer({ userId, onClose, onChanged }) {
           <div className="min-w-0">
             <h2 id="user-detail-title" className="text-xl font-bold text-slate-800 truncate">{u?.name || '—'}</h2>
             <p className="text-sm text-slate-500 truncate">{u?.email}</p>
-            {u && <p className="text-xs text-slate-400 mt-1">{t(ROLE_LABEL[u.role] || u.role)} · {t('Joined {date}', { date: formatDate(u.createdAt) })}</p>}
+            {u && <p className="text-xs text-slate-400 mt-1">{t(ROLE_LABEL[u.role] || u.role)}{u.role === 'vendor' ? ` · ${vendorName(u.vendor_id)}` : ''} · {t('Joined {date}', { date: formatDate(u.createdAt) })}</p>}
           </div>
           <button onClick={onClose} aria-label={t('Close')} className="text-slate-400 hover:text-slate-700"><X size={22} /></button>
         </div>
@@ -78,9 +83,22 @@ function UserDrawer({ userId, onClose, onChanged }) {
                 <button onClick={() => act(`/api/admin/users/${u.id}/block`, { blocked: !u.is_blocked })} disabled={busy} className={`${buttonGhost} ${u.is_blocked ? '' : 'text-red-600'}`}>
                   <Ban size={16} /> {u.is_blocked ? t('Resume earning') : t('Pause earning (block)')}
                 </button>
-                <button onClick={() => act(`/api/admin/users/${u.id}/role`, { role: u.role === 'vendor' ? 'user' : 'vendor' })} disabled={busy} className={buttonGhost}>
-                  <Store size={16} /> {u.role === 'vendor' ? t('Remove counter access') : t('Give counter access (vendor)')}
-                </button>
+                {u.role === 'vendor' ? (
+                  <button onClick={() => act(`/api/admin/users/${u.id}/role`, { role: 'user' })} disabled={busy} className={buttonGhost}>
+                    <Store size={16} /> {t('Remove counter access ({place})', { place: vendorName(u.vendor_id) })}
+                  </button>
+                ) : (
+                  <div className="w-full flex gap-2 items-center">
+                    <label className="sr-only" htmlFor="vendor-pick">{t('Counter')}</label>
+                    <select id="vendor-pick" value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={`${inputClass} flex-1`}>
+                      <option value="">{t('Choose a counter…')}</option>
+                      {vendors.filter((v) => v.active).map((v) => <option key={v.id} value={v.id}>{localized(v, 'name', lang)}</option>)}
+                    </select>
+                    <button onClick={() => act(`/api/admin/users/${u.id}/role`, { role: 'vendor', vendorId })} disabled={busy || !vendorId} className={buttonGhost}>
+                      <Store size={16} /> {t('Give counter access')}
+                    </button>
+                  </div>
+                )}
                 {busy && <Loader2 size={16} className="animate-spin text-slate-400 self-center" />}
                 {error && <p role="alert" className="w-full text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
               </div>
@@ -152,6 +170,8 @@ function UserDrawer({ userId, onClose, onChanged }) {
 export default function UsersPanel({ onChanged }) {
   const { t } = useI18n();
   const { status, data, reload } = useAdminData('/api/admin/users');
+  const vendorsData = useAdminData('/api/admin/vendors');
+  const vendors = vendorsData.data?.vendors || [];
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
 
@@ -160,9 +180,9 @@ export default function UsersPanel({ onChanged }) {
   const filtered = users.filter((u) => String(u.name || '').toLowerCase().includes(term) || String(u.email || '').toLowerCase().includes(term));
 
   const exportCsv = () => {
-    const header = ['Name', 'Email', 'Role', 'Department', 'Hostel', 'Blocked', 'Joined', 'Wallet (INR)', 'Eco Points', 'Items Recycled', 'Weight (kg)', 'Est. CO2 (kg)', 'Rewards Earned (INR)', 'Pending Withdrawals (INR)', 'Open Flags'];
+    const header = ['Name', 'Email', 'Role', 'Counter', 'Department', 'Hostel', 'Blocked', 'Joined', 'Wallet (INR)', 'Eco Points', 'Items Recycled', 'Weight (kg)', 'Est. CO2 (kg)', 'Rewards Earned (INR)', 'Pending Withdrawals (INR)', 'Open Flags'];
     const rows = filtered.map((u) => [
-      u.name, u.email, u.role, u.department, u.hostel, u.is_blocked ? 'yes' : 'no', u.createdAt ? new Date(u.createdAt).toISOString().slice(0, 10) : '',
+      u.name, u.email, u.role, u.vendor_id || '', u.department, u.hostel, u.is_blocked ? 'yes' : 'no', u.createdAt ? new Date(u.createdAt).toISOString().slice(0, 10) : '',
       u.walletBalance ?? 0, u.ecoPoints ?? 0, u.impact?.items ?? 0, u.impact?.wasteKg ?? 0, u.impact?.co2Kg ?? 0, u.rewardsEarned ?? 0, u.pendingWithdrawals ?? 0, u.openFlags ?? 0,
     ]);
     const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
@@ -251,7 +271,7 @@ export default function UsersPanel({ onChanged }) {
           </div>
         </>
       )}
-      {selected && <UserDrawer userId={selected} onClose={() => setSelected(null)} onChanged={() => { reload(); onChanged?.(); }} />}
+      {selected && <UserDrawer userId={selected} vendors={vendors} onClose={() => setSelected(null)} onChanged={() => { reload(); onChanged?.(); }} />}
     </Panel>
   );
 }

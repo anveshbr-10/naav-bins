@@ -67,6 +67,8 @@ function normalizeCatalog(rows) {
     for (const r of Array.isArray(rows) ? rows : []) {
         if (!r || r.active === false || typeof r.item !== 'string') continue;
         if (r.type !== 'points' && r.type !== 'money') continue;
+        // A switched-off counter's credits are not offered (vendors(active) is joined by the store).
+        if (r.vendors && r.vendors.active === false) continue;
         const cost = Math.round(toNumber(r.cost));
         if (cost <= 0) continue;
         out[r.item] = Object.freeze({
@@ -74,6 +76,7 @@ function normalizeCatalog(rows) {
             cost,
             description: String(r.description || ''),
             vendor: r.vendor || null,
+            vendorId: r.vendor_id || null,
             labels: r.labels && typeof r.labels === 'object' ? r.labels : {},
             sort: toNumber(r.sort),
         });
@@ -88,7 +91,7 @@ function publicCatalog(rules, catalog) {
             wasteType, reward: r.reward, points: r.points, stream: r.stream,
         })),
         redeem: Object.entries(catalog).sort(bySort).map(([item, e]) => ({
-            item, type: e.type, cost: e.cost, description: e.description, vendor: e.vendor, labels: e.labels,
+            item, type: e.type, cost: e.cost, description: e.description, vendor: e.vendor, vendorId: e.vendorId, labels: e.labels,
         })),
     };
 }
@@ -200,6 +203,8 @@ function planWasteDeposit(user, recentLogs, {
 function planRedemption(user, { catalog, item, code, upiId }) {
     const entry = lookup(catalog, item);
     if (!entry) return reject(400, 'Unknown reward item');
+    // Campus credits are claimed at one named counter; an item without one cannot be issued.
+    if (entry.type === 'points' && !entry.vendorId) return reject(400, 'This reward is not available right now.');
     if (entry.type === 'money' && !isValidUpiId(upiId)) return reject(400, 'Please enter a valid UPI ID (e.g. name@bank).');
 
     const wallet = toNumber(user.walletBalance);
@@ -215,6 +220,7 @@ function planRedemption(user, { catalog, item, code, upiId }) {
         status: entry.type === 'money' ? 'Pending' : 'Issued',
         upi_id: entry.type === 'money' ? upiId.trim() : null,
         vendor: entry.vendor,
+        vendor_id: entry.type === 'points' ? entry.vendorId : null,
     };
     return {
         redemption,
@@ -230,8 +236,12 @@ const STATUS_TRANSITIONS = Object.freeze({
 });
 const ADMIN_STATUSES = Object.freeze(['Paid', 'Rejected', 'Claimed', 'Cancelled']);
 
-function planRedemptionStatusChange(redemption, { status }) {
+// vendorId: set when counter staff act; they may only claim vouchers issued for their own counter.
+function planRedemptionStatusChange(redemption, { status, vendorId = null }) {
     if (!redemption) return reject(404, 'Redemption not found');
+    if (vendorId && redemption.vendor_id !== vendorId) {
+        return reject(403, 'This voucher is for {place}, not this counter.', { place: redemption.vendor || 'another counter' });
+    }
     const allowed = lookup(STATUS_TRANSITIONS, redemption.type) || {};
     const from = lookup(allowed, redemption.status);
     if (!from || !Object.prototype.hasOwnProperty.call(from, status)) {
