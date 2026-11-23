@@ -6,6 +6,7 @@
 //   so concurrent requests cannot both pass the cooldown / daily-limit checks or double-spend.
 
 const { normalizeRules, normalizeCatalog } = require('./rewards');
+const { normalizeProgram, LEGACY_PROGRAM } = require('./cashback');
 
 const LOG_FIELDS = 'id, created_at, bin_id, bin_name, waste_type, stream, accepted, reject_reason, reward_inr, points, est_weight_kg, measured_weight_kg, session_id';
 const RULES_TTL_MS = 60 * 1000;
@@ -53,7 +54,27 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         rulesCache = { value, expires: now() + RULES_TTL_MS };
         return value;
     }
-    function invalidateRewardTables() { rulesCache = null; }
+    function invalidateRewardTables() { rulesCache = null; programCache = null; }
+
+    // ---------- reward programme (campus wallet + cashback; 004_wallet_cashback.sql) ----------
+    // Before 004 is run the table is missing: fall back to the old behaviour (LEGACY_PROGRAM).
+    let programCache = null;
+    async function loadProgram() {
+        if (programCache && programCache.expires > now()) return programCache.value;
+        const { data, error } = await supabase.from('reward_program').select('*').eq('id', 1).maybeSingle();
+        const value = error ? LEGACY_PROGRAM : normalizeProgram(data);
+        if (error && error.code !== '42P01' && error.code !== 'PGRST205') console.error('Reward programme error:', error.message || error);
+        programCache = { value, expires: now() + RULES_TTL_MS };
+        return value;
+    }
+
+    // Extra points given by milestone multipliers since sinceMs (for the daily bonus budget).
+    async function bonusSpentSince(sinceMs) {
+        const { data, error } = await supabase.from('bonus_releases').select('extra')
+            .eq('kind', 'release').gt('extra', 0).gte('created_at', new Date(sinceMs).toISOString()).limit(100000);
+        if (error) throw error;
+        return (data || []).reduce((s, r) => s + (Number(r.extra) || 0), 0);
+    }
 
     // ---------- logs ----------
     async function logsSince(userId, sinceMs, fields = LOG_FIELDS) {
@@ -99,14 +120,26 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
                 return { outcome: 'ok', result: plan.result };
             }
 
-            const { data, error } = await supabase.rpc('naav_apply_deposit', {
-                p_user: userId,
-                p_expected_wallet: profile.walletBalance,
-                p_expected_points: profile.ecoPoints,
-                p_log: plan.log,
-            });
+            // With a cashback award (004 installed) the v2 function also moves the pending bonus.
+            const { data, error } = plan.award
+                ? await supabase.rpc('naav_apply_deposit_v2', {
+                    p_user: userId,
+                    p_expected: {
+                        walletBalance: profile.walletBalance, ecoPoints: profile.ecoPoints,
+                        pendingPoints: profile.pending_points || 0, cycleItems: profile.cycle_items || 0,
+                    },
+                    p_log: plan.log,
+                    p_award: plan.award,
+                })
+                : await supabase.rpc('naav_apply_deposit', {
+                    p_user: userId,
+                    p_expected_wallet: profile.walletBalance,
+                    p_expected_points: profile.ecoPoints,
+                    p_log: plan.log,
+                });
             if (error) throw error;
             if (data === 'ok') return { outcome: 'ok', result: plan.result };
+            if (data === 'invalid') return { outcome: 'rejected', code: 400, message: 'Invalid request', template: 'Invalid request' };
             if (data === 'duplicate_session') {
                 return { outcome: 'rejected', code: 409, message: 'This bin scan has already been used. Please scan the bin QR code again.', template: 'This bin scan has already been used. Please scan the bin QR code again.' };
             }
@@ -218,7 +251,7 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
 
     return {
         getProfile, ensureProfile,
-        loadRewardTables, invalidateRewardTables,
+        loadRewardTables, invalidateRewardTables, loadProgram, bonusSpentSince,
         logsSince, previousHashes, applyDeposit,
         applyRedemption, getRedemption, changeRedemptionStatus,
         claimChallenge, claimedChallengeIds,

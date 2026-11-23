@@ -110,7 +110,7 @@ html.dark .text-gray-500, html.dark .text-slate-500,
 html.dark .text-gray-400, html.dark .text-slate-400 { color: var(--text-muted); }
 
 /* Borders */
-html.dark .border-gray-100, html.dark .border-slate-100, html.dark .border-slate-50,
+html.dark .border-gray-100, html.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]), html.dark .border-slate-100, html.dark .border-slate-50,
 html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border); }
 html.dark .border-gray-200, html.dark .border-slate-200,
 html.dark .border-gray-300, html.dark .border-slate-300 { border-color: var(--border-strong); }

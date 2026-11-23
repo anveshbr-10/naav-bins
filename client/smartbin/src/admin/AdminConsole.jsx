@@ -16,6 +16,7 @@ import RedemptionsPanel from './RedemptionsPanel';
 import UsersPanel from './UsersPanel';
 import RewardsPanel from './RewardsPanel';
 import VendorsPanel from './VendorsPanel';
+import PaymentsPanel from './PaymentsPanel';
 
 const TABS = [
   { id: 'overview', label: tk('Overview'), icon: LayoutDashboard },
@@ -24,6 +25,7 @@ const TABS = [
   { id: 'redemptions', label: tk('Redemptions'), icon: Ticket },
   { id: 'users', label: tk('Users'), icon: Users },
   { id: 'vendors', label: tk('Vendors'), icon: Store },
+  { id: 'payments', label: tk('Payments'), icon: Landmark },
   { id: 'rewards', label: tk('Rewards'), icon: Coins },
 ];
 
@@ -117,6 +119,7 @@ export default function AdminConsole() {
         {tab === 'redemptions' && <RedemptionsPanel onChanged={overview.reload} />}
         {tab === 'users' && <UsersPanel onChanged={overview.reload} />}
         {tab === 'vendors' && <VendorsPanel days={days} />}
+        {tab === 'payments' && <PaymentsPanel />}
         {tab === 'rewards' && <RewardsPanel />}
       </div>
     </AppShell>

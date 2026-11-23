@@ -130,8 +130,9 @@ function computeImpact(rows, rules) {
 // Returns { reject } or { log, result }.
 // A wrong-stream item (e.g. food waste at a dry-waste bin) is recorded with no reward, so the
 // operations console can show contamination; the user is told which bin to use.
+// pointsOnly: the campus-wallet model (Phase 2) — items earn Eco-Points only, no ₹.
 function planWasteDeposit(user, recentLogs, {
-    rules, wasteType, bin, sessionId, now, cooldownMs, dailyLimit, imageHash, duplicates, gpsDistance,
+    rules, wasteType, bin, sessionId, now, cooldownMs, dailyLimit, imageHash, duplicates, gpsDistance, pointsOnly = false,
 }) {
     const rule = lookup(rules, wasteType);
     if (!rule) return reject(400, 'Unknown waste type');
@@ -190,8 +191,8 @@ function planWasteDeposit(user, recentLogs, {
     }
 
     return {
-        log: { ...base, accepted: true, reject_reason: null, reward_inr: rule.reward, points: rule.points, session_id: sessionId || null },
-        result: { accepted: true, reward: rule.reward, points: rule.points, stream: rule.stream, binStream },
+        log: { ...base, accepted: true, reject_reason: null, reward_inr: pointsOnly ? 0 : rule.reward, points: rule.points, session_id: sessionId || null },
+        result: { accepted: true, reward: pointsOnly ? 0 : rule.reward, points: rule.points, stream: rule.stream, binStream },
         expected: { walletBalance: toNumber(user.walletBalance), ecoPoints: toNumber(user.ecoPoints) },
     };
 }

@@ -22,7 +22,7 @@ function csvCell(value) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function VendorForm({ vendor, onClose, onSaved }) {
+function VendorForm({ vendor, walletReady, onClose, onSaved }) {
   const { t } = useI18n();
   const handleAuthError = useAuthErrorHandler();
   const isNew = !vendor;
@@ -32,6 +32,8 @@ function VendorForm({ vendor, onClose, onSaved }) {
     category: vendor?.category || 'canteen',
     location: vendor?.location || '',
     dailyClaimLimit: vendor?.daily_claim_limit ?? 300,
+    maxTxnInr: vendor?.max_txn_inr ?? 500,
+    dailyLimitInr: vendor?.daily_limit_inr ?? 20000,
     active: vendor?.active ?? true,
     kn: (vendor?.labels && typeof vendor.labels.kn === 'string' && vendor.labels.kn) || '',
     hi: (vendor?.labels && typeof vendor.labels.hi === 'string' && vendor.labels.hi) || '',
@@ -47,6 +49,8 @@ function VendorForm({ vendor, onClose, onSaved }) {
     const body = {
       name: form.name, category: form.category, location: form.location,
       dailyClaimLimit: Number(form.dailyClaimLimit), active: form.active, labels: { kn: form.kn, hi: form.hi },
+      // Payment limits exist once 004_wallet_cashback.sql has been run.
+      ...(walletReady ? { maxTxnInr: Number(form.maxTxnInr), dailyLimitInr: Number(form.dailyLimitInr) } : {}),
     };
     try {
       if (isNew) await api.post('/api/admin/vendors', { id: form.id, ...body });
@@ -94,6 +98,18 @@ function VendorForm({ vendor, onClose, onSaved }) {
             <input type="number" min="1" max="10000" step="1" className={inputClass} value={form.dailyClaimLimit} onChange={set('dailyClaimLimit')} required />
           </label>
         </div>
+        {walletReady && (
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="font-semibold text-slate-700">{t('Max per payment (₹)')}</span>
+              <input type="number" min="1" max="100000" step="1" className={inputClass} value={form.maxTxnInr} onChange={set('maxTxnInr')} required />
+            </label>
+            <label className="block">
+              <span className="font-semibold text-slate-700">{t('Daily payment limit (₹)')}</span>
+              <input type="number" min="1" max="10000000" step="1" className={inputClass} value={form.dailyLimitInr} onChange={set('dailyLimitInr')} required />
+            </label>
+          </div>
+        )}
         <label className="block">
           <span className="font-semibold text-slate-700">{t('Location')}</span>
           <input className={inputClass} value={form.location} onChange={set('location')} maxLength={120} />
@@ -119,11 +135,14 @@ export default function VendorsPanel({ days }) {
   const [editing, setEditing] = useState(null); // vendor row, 'new', or null
 
   const vendors = data?.vendors || [];
+  const walletReady = vendors.some((v) => v.max_txn_inr !== undefined);
 
   const exportCsv = () => {
-    const header = ['Vendor ID', 'Name', 'Category', 'Active', `Vouchers claimed (last ${data.days} days)`, 'Points', 'Value (INR)', 'Open vouchers', 'Staff'];
+    const header = ['Vendor ID', 'Name', 'Category', 'Active', `Payments (last ${data.days} days)`, 'Payments (INR)',
+      'Vouchers claimed', 'Voucher points', 'Voucher value (INR)', 'Total owed (INR)', 'Open vouchers', 'Staff'];
     const rows = vendors.map((v) => [
-      v.id, v.name, v.category, v.active ? 'yes' : 'no', v.settlement?.claimed ?? 0, v.settlement?.points ?? 0, v.settlement?.valueInr ?? 0,
+      v.id, v.name, v.category, v.active ? 'yes' : 'no', v.settlement?.payments ?? 0, v.settlement?.paymentsInr ?? 0,
+      v.settlement?.claimed ?? 0, v.settlement?.points ?? 0, v.settlement?.voucherInr ?? 0, v.settlement?.valueInr ?? 0,
       v.openVouchers, v.staff.map((s) => s.email).join('; '),
     ]);
     const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
@@ -170,8 +189,9 @@ export default function VendorsPanel({ days }) {
 
               <div className="grid grid-cols-3 gap-2 mt-4 text-center">
                 <div className="bg-slate-50 rounded-xl p-2">
-                  <p className="text-[11px] text-slate-500">{t('Claimed')}</p>
-                  <p className="font-bold text-slate-800">{formatCount(v.settlement?.claimed)}</p>
+                  <p className="text-[11px] text-slate-500">{t('Payments')}</p>
+                  <p className="font-bold text-slate-800">{formatCount(v.settlement?.payments)}</p>
+                  <p className="text-[10px] text-slate-400">{t('+{n} vouchers', { n: v.settlement?.claimed ?? 0 })}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-2">
                   <p className="text-[11px] text-slate-500">{t('Owed to vendor')}</p>
@@ -184,7 +204,7 @@ export default function VendorsPanel({ days }) {
               </div>
 
               <div className="mt-4">
-                <p className="text-xs font-semibold text-slate-600 flex items-center gap-1 mb-1"><Users size={12} /> {t('Counter staff')} · {t('limit {n}/day', { n: v.daily_claim_limit })}</p>
+                <p className="text-xs font-semibold text-slate-600 flex items-center gap-1 mb-1"><Users size={12} /> {t('Counter staff')} · {t('limit {n}/day', { n: v.daily_claim_limit })}{v.max_txn_inr !== undefined ? ` · ${t('max ₹{n}/payment', { n: v.max_txn_inr })}` : ''}</p>
                 {v.staff.length === 0
                   ? <p className="text-xs text-slate-400">{t('No staff yet. Give access from Users → a user → Give counter access.')}</p>
                   : <ul className="text-xs text-slate-600 space-y-0.5">{v.staff.map((s) => <li key={s.id} className="truncate">{s.name || '—'} · {s.email}</li>)}</ul>}
@@ -201,6 +221,7 @@ export default function VendorsPanel({ days }) {
       {editing && (
         <VendorForm
           vendor={editing === 'new' ? null : editing}
+          walletReady={walletReady}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }}
         />

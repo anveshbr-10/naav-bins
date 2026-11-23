@@ -63,9 +63,12 @@ test('settlement: claimed points per counter, converted at the exchange rate', (
         { vendor_id: 'utsav-cafe', cost: 200 }, { vendor_id: 'utsav-cafe', cost: 450 }, { vendor_id: 'gone', cost: 999 }, null,
     ], 10);
     assert.deepEqual(rows, [
-        { vendorId: 'utsav-cafe', claimed: 2, points: 650, valueInr: 65 },
-        { vendorId: 'mtr-stall', claimed: 0, points: 0, valueInr: 0 },
+        { vendorId: 'utsav-cafe', claimed: 2, points: 650, voucherInr: 65, payments: 0, paymentsInr: 0, valueInr: 65 },
+        { vendorId: 'mtr-stall', claimed: 0, points: 0, voucherInr: 0, payments: 0, paymentsInr: 0, valueInr: 0 },
     ]);
+    const withPay = summarizeSettlement([UTSAV], [{ vendor_id: 'utsav-cafe', cost: 200 }], 10,
+        [{ vendor_id: 'utsav-cafe', amount_inr: 2 }, { vendor_id: 'utsav-cafe', amount_inr: 70 }, { vendor_id: 'gone', amount_inr: 5 }]);
+    assert.deepEqual(withPay[0], { vendorId: 'utsav-cafe', claimed: 1, points: 200, voucherInr: 20, payments: 2, paymentsInr: 72, valueInr: 92 });
     assert.equal(summarizeSettlement([UTSAV], [{ vendor_id: 'utsav-cafe', cost: 25 }], 0)[0].valueInr, 2.5, 'bad rate falls back to 10');
 });
 
@@ -76,4 +79,10 @@ test('catalogue: credits of a switched-off counter are not offered', () => {
         { item: 'Off', type: 'points', cost: 10, vendor_id: 'b', vendors: { active: false } },
     ]);
     assert.deepEqual(Object.keys(c), ['On']);
+});
+
+test('vendor input: payment limits are whole rupees in range', () => {
+    assert.deepEqual(parseVendorInput({ maxTxnInr: 200, dailyLimitInr: 5000 }, { partial: true }).values, { max_txn_inr: 200, daily_limit_inr: 5000 });
+    assert.equal(parseVendorInput({ maxTxnInr: 0 }, { partial: true }).reject.code, 400);
+    assert.equal(parseVendorInput({ dailyLimitInr: 1.5 }, { partial: true }).reject.code, 400);
 });

@@ -78,6 +78,12 @@ function parseVendorInput(body, { partial = false } = {}) {
         if (!Number.isInteger(n) || n < 1 || n > 10000) return reject(400, 'Daily limit must be a whole number from 1 to 10000.');
         values.daily_claim_limit = n;
     }
+    for (const [k, col, max] of [['maxTxnInr', 'max_txn_inr', 100000], ['dailyLimitInr', 'daily_limit_inr', 10000000]]) {
+        if (!has(k)) continue;
+        const n = Number(b[k]);
+        if (!Number.isInteger(n) || n < 1 || n > max) return reject(400, 'Payment limits must be whole rupees from ₹1 to ₹{max}.', { max });
+        values[col] = n;
+    }
     if (has('active')) {
         if (typeof b.active !== 'boolean') return reject(400, 'Invalid request');
         values.active = b.active;
@@ -99,20 +105,32 @@ function parseVendorInput(body, { partial = false } = {}) {
 
 // Settlement: what each counter handed out, so the college can pay the vendors.
 //   vendors:     vendors rows
-//   redemptions: claimed points redemptions in the period ({ vendor_id, cost })
+//   redemptions: claimed points vouchers in the period ({ vendor_id, cost })
 //   pointsPerRupee: exchange rate (10 points = ₹1 by default)
-function summarizeSettlement(vendors, redemptions, pointsPerRupee = 10) {
+//   payments:    completed campus-wallet payments in the period ({ vendor_id, amount_inr })
+function summarizeSettlement(vendors, redemptions, pointsPerRupee = 10, payments = []) {
     const rate = Number(pointsPerRupee) > 0 ? Number(pointsPerRupee) : 10;
-    const totals = new Map((vendors || []).map(v => [v.id, { claimed: 0, points: 0 }]));
+    const totals = new Map((vendors || []).map(v => [v.id, { claimed: 0, points: 0, payments: 0, paymentsInr: 0 }]));
     for (const r of redemptions || []) {
         const t = r && totals.get(r.vendor_id);
         if (!t) continue;
         t.claimed += 1;
         t.points += Number(r.cost) || 0;
     }
+    for (const p of payments || []) {
+        const t = p && totals.get(p.vendor_id);
+        if (!t) continue;
+        t.payments += 1;
+        t.paymentsInr += Number(p.amount_inr) || 0;
+    }
     return (vendors || []).map(v => {
         const t = totals.get(v.id);
-        return { vendorId: v.id, claimed: t.claimed, points: t.points, valueInr: Math.round((t.points / rate) * 100) / 100 };
+        const voucherInr = Math.round((t.points / rate) * 100) / 100;
+        return {
+            vendorId: v.id, claimed: t.claimed, points: t.points, voucherInr,
+            payments: t.payments, paymentsInr: t.paymentsInr,
+            valueInr: Math.round((voucherInr + t.paymentsInr) * 100) / 100,
+        };
     });
 }
 

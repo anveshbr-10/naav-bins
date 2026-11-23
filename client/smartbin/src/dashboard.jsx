@@ -4,14 +4,17 @@ import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
 import { useI18n, localized, tk } from './i18n';
 import RedeemModal from './redeemModal';
-import { formatCo2, formatDateTime, formatKg } from './format';
+import PayModal from './payModal';
+import ConvertModal from './convertModal';
+import WalletHistory from './walletHistory';
+import { formatCo2, formatDate, formatDateTime, formatKg } from './format';
 import AppShell from './layout';
 import { useTheme } from './themeContext';
 import { WASTE_TYPES, WASTE_BY_NAME, STREAMS, streamOf, STATUS_LABEL } from './waste';
 import { StreakAndRank, Challenges, Badges } from './progress';
 import {
   Wallet, Leaf, LogOut, History, Ticket, MapPin, ScanQrCode, Gift, Receipt, RefreshCw, Loader2, TreePine,
-  WifiOff, Map as MapIcon, Coffee, PenTool, Printer, Users, Scale, AlertTriangle,
+  WifiOff, Map as MapIcon, Coffee, PenTool, Printer, Users, Scale, AlertTriangle, Store, Sparkles, ArrowRight,
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
@@ -100,6 +103,9 @@ export default function Dashboard() {
   const [catalog, setCatalog] = useState(null);
   const [catalogFailed, setCatalogFailed] = useState(false);
   const [redeemEntry, setRedeemEntry] = useState(null);
+  const [payOpen, setPayOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [walletKey, setWalletKey] = useState(0);
 
   const { signOut, reloadProfile } = useAuth();
   const { resolved: theme } = useTheme();
@@ -202,7 +208,7 @@ export default function Dashboard() {
     const dateString = d.toDateString();
     const dailyTotal = logs
       .filter((log) => log.accepted !== false && new Date(log.created_at).toDateString() === dateString)
-      .reduce((sum, log) => sum + (Number(log.reward_inr) || 0), 0);
+      .reduce((sum, log) => sum + (Number(log.points) || 0), 0);
     earningsData.push({ name: d.toLocaleDateString(lang === 'en' ? 'en-IN' : `${lang}-IN`, { weekday: 'short' }), earnings: dailyTotal });
   }
 
@@ -214,6 +220,9 @@ export default function Dashboard() {
   const vouchers = (catalog?.redeem || []).filter((r) => r.type === 'points');
   const withdrawal = (catalog?.redeem || []).find((r) => r.type === 'money');
   const needsTeam = !user.department || !user.hostel;
+  const wallet = data.wallet || null;     // campus wallet (null until 004_wallet_cashback.sql is run)
+  const cashback = data.cashback || null; // pending bonus (null when the programme is off)
+  const refreshWallet = () => { fetchUserData(); setWalletKey((k) => k + 1); };
 
   return (
     <AppShell>
@@ -234,7 +243,79 @@ export default function Dashboard() {
 
       {needsTeam && <TeamSetup user={user} onSaved={() => { fetchUserData(); reloadProfile(); }} />}
 
-      {/* STATS */}
+      {/* WALLET: Eco-Points (coins) -> redeem into rupees -> spend only at campus counters */}
+      {wallet ? (
+        <section aria-label={t('Your wallet')} className="mb-8 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+            {/* Eco-Points (coins) */}
+            <div className="p-6 flex flex-col">
+              <p className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+                <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><Leaf size={16} aria-hidden="true" /></span>
+                {t('Eco-Points')}
+              </p>
+              <p className="mt-3 text-4xl font-extrabold text-gray-900 leading-none">{wallet.points.toLocaleString('en-IN')}</p>
+              <p className="mt-2 text-sm text-gray-500">{t('Worth ₹{n} · {rate} Eco-Points = ₹1', { n: wallet.redeemableInr, rate: wallet.pointsPerRupee })}</p>
+              <div className="mt-auto pt-5">
+                <button onClick={() => setConvertOpen(true)} disabled={wallet.redeemableInr < 1}
+                  className="w-full py-2.5 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 inline-flex items-center justify-center gap-2">
+                  {t('Redeem to wallet')} <ArrowRight size={16} aria-hidden="true" />
+                </button>
+                {wallet.redeemableInr < 1 && <p className="text-xs text-gray-500 mt-2 text-center">{t('Collect {n} Eco-Points to redeem ₹1.', { n: wallet.pointsPerRupee })}</p>}
+              </div>
+            </div>
+
+            {/* Rupee wallet */}
+            <div className="p-6 flex flex-col">
+              <p className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+                <span className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center"><Wallet size={16} aria-hidden="true" /></span>
+                {t('Campus wallet')}
+              </p>
+              <p className="mt-3 text-4xl font-extrabold text-gray-900 leading-none">₹{wallet.inr}</p>
+              <p className="mt-2 text-sm text-gray-500">{t('Spend only at campus counters.')}</p>
+              <div className="mt-auto pt-5">
+                <button onClick={() => setPayOpen(true)} className="w-full py-2.5 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 inline-flex items-center justify-center gap-2">
+                  <Store size={16} aria-hidden="true" /> {t('Pay at counter')}
+                </button>
+              </div>
+            </div>
+
+            {/* Impact */}
+            <div className="p-6 flex flex-col">
+              <p className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+                <span className="w-8 h-8 rounded-full bg-yellow-100 text-yellow-600 flex items-center justify-center"><TreePine size={16} aria-hidden="true" /></span>
+                {t('CO₂ saved')} <span className="text-xs font-normal">{t('(est.)')}</span>
+              </p>
+              <p className="mt-3 text-4xl font-extrabold text-gray-900 leading-none">{formatCo2(impact?.co2Kg)}</p>
+              <p className="mt-2 text-sm text-gray-500">
+                {t('{n} items · {kg} recycled', { n: impact?.items ?? 0, kg: formatKg(impact?.wasteKg) })}
+                {impact?.measuredItems ? ` · ${t('{n} weighed by the bin', { n: impact.measuredItems })}` : ''}
+              </p>
+            </div>
+          </div>
+
+          {/* Bonus Eco-Points on the way */}
+          {cashback && cashback.nextMilestone && (
+            <div className="border-t border-gray-100 px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+              <p className="flex items-center gap-2 text-sm font-semibold text-gray-700 flex-shrink-0">
+                <Sparkles size={18} className="text-amber-500" aria-hidden="true" />
+                {t('Bonus Eco-Points on the way')}
+                <span className="ml-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">+{cashback.pending}</span>
+              </p>
+              <div className="flex-1 min-w-0">
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden" aria-hidden="true">
+                  <div className="h-full bg-amber-400 rounded-full transition-all" style={{ width: `${Math.min(100, (cashback.cycleItems / cashback.nextMilestone) * 100)}%` }} />
+                </div>
+              </div>
+              <p className="text-sm text-gray-500 flex-shrink-0">
+                {t('{n} more items to unlock', { n: cashback.itemsToNext })} · {cashback.cycleItems}/{cashback.nextMilestone}
+              </p>
+            </div>
+          )}
+          {cashback?.expiresAt && cashback.pending > 0 && (
+            <p className="px-6 pb-4 -mt-2 text-xs text-gray-500">{t('Recycle before {date} to keep it', { date: formatDate(cashback.expiresAt) })}</p>
+          )}
+        </section>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
@@ -268,6 +349,7 @@ export default function Dashboard() {
           <TreePine className="text-yellow-600" size={40} aria-hidden="true" />
         </div>
       </div>
+      )}
 
       {/* PRIMARY ACTIONS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
@@ -298,7 +380,7 @@ export default function Dashboard() {
       {/* CHARTS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8 mb-10">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-80 flex flex-col">
-          <h3 className="text-lg font-bold mb-4 text-gray-700">{t('Earnings trend')}</h3>
+          <h3 className="text-lg font-bold mb-4 text-gray-700">{t('Points trend')}</h3>
           {/* The chart gets the space under the title (not 100% of the card), so axis labels stay inside. */}
           <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
@@ -306,7 +388,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
               <XAxis dataKey="name" stroke={chart.axis} tick={{ fill: chart.axis, fontSize: 12 }} interval={0} tickMargin={8} padding={{ left: 16, right: 16 }} />
               <YAxis allowDecimals={false} stroke={chart.axis} tick={{ fill: chart.axis, fontSize: 12 }} width={32} />
-              <Tooltip contentStyle={chart.tooltip} labelStyle={{ color: chart.tooltip.color }} formatter={(value) => [`₹${value}`, t('Earnings')]} />
+              <Tooltip contentStyle={chart.tooltip} labelStyle={{ color: chart.tooltip.color }} formatter={(value) => [t('{n} pts', { n: value }), t('Points')]} />
               <Line type="monotone" dataKey="earnings" stroke="#16a34a" strokeWidth={3} dot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
@@ -356,7 +438,7 @@ export default function Dashboard() {
                     <p className="text-[11px] font-semibold" style={{ color: stream.color }}>{t(stream.label)} · {t(stream.bin)}</p>
                   )}
                   <p className="text-xs font-bold mt-0.5" style={{ color: w.color }}>
-                    {r ? t('+₹{reward} · +{points} pts per item', { reward: r.reward, points: r.points }) : catalogFailed ? t('Reward unavailable') : t('Loading…')}
+                    {r ? (r.reward > 0 ? t('+₹{reward} · +{points} pts per item', { reward: r.reward, points: r.points }) : t('+{points} pts per item', { points: r.points })) : catalogFailed ? t('Reward unavailable') : t('Loading…')}
                   </p>
                 </div>
               </div>
@@ -365,12 +447,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* REWARDS SHOP: campus credits */}
+      {/* REWARDS SHOP: campus credits (old fixed vouchers; hidden once the wallet replaces them) */}
+      {(!wallet || vouchers.length > 0) && (
       <div className="mb-10">
         <h3 className="text-2xl font-bold mb-1 text-gray-800 flex items-center gap-2">
           <Ticket className="text-blue-600" /> {t('Campus credits')}
         </h3>
-        <p className="text-sm text-gray-500 mb-6">{t('Redeem Eco Points for credits at the canteen, stationery store and print centre. Show the code at the counter.')}</p>
+        <p className="text-sm text-gray-500 mb-6">{wallet ? t('Spend your campus wallet at the canteen, snack stall, stationery store and print centre.') : t('Redeem Eco Points for credits at the canteen, stationery store and print centre. Show the code at the counter.')}</p>
         {catalogFailed && !catalog ? (
           <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-500">
             {t('Could not load rewards.')}{' '}
@@ -379,6 +462,16 @@ export default function Dashboard() {
         ) : !catalog ? (
           <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-400 flex items-center justify-center gap-2">
             <Loader2 className="animate-spin" size={18} /> {t('Loading rewards…')}
+          </div>
+        ) : wallet && vouchers.length === 0 ? (
+          <div className="bg-gradient-to-br from-green-50 to-white border border-green-200 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+            <div>
+              <p className="font-bold text-gray-900">{t('Pay any amount: ₹2 for a photocopy, ₹70 for a record book')}</p>
+              <p className="text-sm text-gray-600 mt-1">{t('Choose the counter and amount, then show the one-time code. Only that amount is used; the rest stays in your wallet.')}</p>
+            </div>
+            <button onClick={() => setPayOpen(true)} className="px-5 py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 flex items-center justify-center gap-2 flex-shrink-0">
+              <Store size={18} aria-hidden="true" /> {t('Pay at a counter')}
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -406,6 +499,10 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      )}
+
+      {wallet && <WalletHistory refreshKey={walletKey} />}
 
       {/* REDEMPTION HISTORY */}
       <div className="mb-10">
@@ -485,6 +582,8 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {payOpen && <PayModal onClose={() => { setPayOpen(false); refreshWallet(); }} onPaid={refreshWallet} onNeedMoney={() => { setPayOpen(false); setConvertOpen(true); }} />}
+      {convertOpen && wallet && <ConvertModal wallet={wallet} onClose={() => setConvertOpen(false)} onConverted={refreshWallet} />}
       {redeemEntry && (
         <RedeemModal
           entry={redeemEntry}

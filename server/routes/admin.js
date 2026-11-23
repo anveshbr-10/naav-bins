@@ -6,6 +6,8 @@ const { deriveDeviceKey } = require('../lib/binQr');
 const {
     istDayStart, planCounterAccess, planVoucherAccess, planDailyLimit, parseVendorInput, summarizeSettlement, VENDOR_ID_RE,
 } = require('../lib/vendors');
+const { parsePaymentCode, effectiveStatus, planPaymentAccess, confirmError } = require('../lib/payments');
+const { parseProgramInput, programView, normalizeProgram } = require('../lib/cashback');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BIN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -173,14 +175,26 @@ module.exports = function adminRoutes(ctx) {
     // Staff see and claim only vouchers issued for their own counter, up to its daily limit.
     const vendorView = v => (v ? {
         id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels, dailyClaimLimit: v.daily_claim_limit,
+        maxTxnInr: v.max_txn_inr ?? null, dailyLimitInr: v.daily_limit_inr ?? null,
     } : null);
 
     app.get('/api/counter/me', ...counter, async (req, res) => {
-        const claims = await store.vendorClaimsSince(req.vendor ? req.vendor.id : null, istDayStart(Date.now()));
+        const since = istDayStart(Date.now());
+        const claims = await store.vendorClaimsSince(req.vendor ? req.vendor.id : null, since);
+        let pq = supabase.from('vendor_payments')
+            .select('code, amount_inr, completed_at, user_profiles!vendor_payments_user_id_fkey(name)')
+            .eq('status', 'Completed').gte('completed_at', new Date(since).toISOString())
+            .order('completed_at', { ascending: false }).limit(200);
+        if (req.vendor) pq = pq.eq('vendor_id', req.vendor.id);
+        const { data: pays, error: payError } = await pq;
+        // Before 004 is run the table is missing: show vouchers only.
+        const payments = payError ? [] : (pays || []).map(({ user_profiles: u, ...p }) => ({ ...p, userName: u ? u.name : null }));
         res.json({
             status: 'ok',
             vendor: vendorView(req.vendor),
             today: claims.map(({ user_profiles: u, ...c }) => ({ ...c, userName: u ? u.name : null })),
+            payments,
+            paymentsInr: payments.reduce((s, p) => s + (Number(p.amount_inr) || 0), 0),
         });
     });
 
@@ -206,10 +220,47 @@ module.exports = function adminRoutes(ctx) {
         return decide(req, res, str(req.params.code).toUpperCase(), 'Claimed', req.vendor ? req.vendor.id : null);
     });
 
+    // ---------------- campus-wallet payments at the counter ----------------
+    async function loadPayment(code) {
+        const { data, error } = await supabase.from('vendor_payments')
+            .select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at, staff_email, vendors(name), user_profiles!vendor_payments_user_id_fkey(name)')
+            .eq('code', code).maybeSingle();
+        if (error) throw error;
+        if (!data) return null;
+        const { vendors: v, user_profiles: u, ...p } = data;
+        return { ...p, vendor_name: v ? v.name : null, userName: u ? u.name : null };
+    }
+
+    app.get('/api/counter/payment/:code', ...counter, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Enter a code like NP-ABCD-2345.');
+        const payment = await loadPayment(code);
+        const access = planPaymentAccess(payment, req.vendor);
+        if (access.reject) return fail(res, access.reject.code, access.reject.template, access.reject.params);
+        res.json({ status: 'ok', payment: { ...payment, status: effectiveStatus(payment, Date.now()) } });
+    });
+
+    app.post('/api/counter/payment/:code/confirm', ...counter, limiters.write, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Enter a code like NP-ABCD-2345.');
+        const { data, error } = await supabase.rpc('naav_confirm_payment', {
+            p_code: code, p_vendor: req.vendor ? req.vendor.id : null, p_staff: req.user.id, p_staff_email: req.user.email,
+        });
+        if (error) throw error;
+        const err = confirmError(data);
+        if (err) return fail(res, err.code, err.template);
+        caches.stats = null;
+        res.json({ status: 'ok', payment: await loadPayment(code) });
+    });
+
     // ---------------- vendors (campus counters) ----------------
     app.get('/api/admin/vendors', ...admin, async (req, res) => {
         const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 7));
         const since = new Date(Date.now() - days * DAY_MS).toISOString();
+        const [program, pays] = await Promise.all([
+            store.loadProgram(),
+            supabase.from('vendor_payments').select('vendor_id, amount_inr').eq('status', 'Completed').gte('completed_at', since).limit(100000),
+        ]);
         const [vendors, staff, claims, open] = await Promise.all([
             supabase.from('vendors').select('*').order('sort').order('name'),
             supabase.from('user_profiles').select('id, name, email, vendor_id').eq('role', 'vendor'),
@@ -217,11 +268,11 @@ module.exports = function adminRoutes(ctx) {
             supabase.from('redemptions').select('vendor_id').eq('type', 'points').eq('status', 'Issued').limit(100000),
         ]);
         for (const r of [vendors, staff, claims, open]) if (r.error) throw r.error;
-        const settlement = new Map(summarizeSettlement(vendors.data, claims.data, config.POINTS_PER_RUPEE).map(s => [s.vendorId, s]));
+        const settlement = new Map(summarizeSettlement(vendors.data, claims.data, program.pointsPerRupee, pays.error ? [] : pays.data).map(s => [s.vendorId, s]));
         res.json({
             status: 'ok',
             days,
-            pointsPerRupee: config.POINTS_PER_RUPEE,
+            pointsPerRupee: program.pointsPerRupee,
             vendors: vendors.data.map(v => ({
                 ...v,
                 staff: staff.data.filter(s => s.vendor_id === v.id).map(s => ({ id: s.id, name: s.name, email: s.email })),
@@ -436,6 +487,52 @@ module.exports = function adminRoutes(ctx) {
             if (blockError) throw blockError;
         }
         res.json({ status: 'ok' });
+    });
+
+    // ---------------- campus-wallet payments (admin) ----------------
+    app.get('/api/admin/payments', ...admin, async (req, res) => {
+        let q = supabase.from('vendor_payments')
+            .select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at, staff_email, refunded_at, refunded_by, vendors(name), user_profiles!vendor_payments_user_id_fkey(name, email)')
+            .order('created_at', { ascending: false }).limit(500);
+        if (req.query.scope !== 'all') q = q.eq('status', 'Completed');
+        const { data, error } = await q;
+        if (error) throw error;
+        const now = Date.now();
+        res.json({
+            status: 'ok',
+            payments: (data || []).map(({ vendors: v, user_profiles: u, ...p }) => ({
+                ...p, status: effectiveStatus(p, now), vendorName: v ? v.name : null, userName: u ? u.name : null, userEmail: u ? u.email : null,
+            })),
+        });
+    });
+
+    app.post('/api/admin/payments/:code/refund', ...adminWrite, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.rpc('naav_refund_payment', { p_code: code, p_actor: req.user.email });
+        if (error) throw error;
+        if (data !== 'ok') return fail(res, 409, 'Only a completed payment can be refunded, once.');
+        caches.stats = null;
+        res.json({ status: 'ok' });
+    });
+
+    // ---------------- reward programme (campus wallet + cashback) ----------------
+    app.get('/api/admin/program', ...admin, async (req, res) => {
+        const program = await store.loadProgram();
+        const since = istDayStart(Date.now());
+        const bonusToday = program.legacy ? 0 : await store.bonusSpentSince(since);
+        res.json({ status: 'ok', program: programView(program), bonusToday });
+    });
+
+    app.post('/api/admin/program', ...adminWrite, async (req, res) => {
+        const parsed = parseProgramInput(req.body);
+        if (parsed.reject) return fail(res, parsed.reject.code, parsed.reject.template, parsed.reject.params);
+        const { data, error } = await supabase.from('reward_program')
+            .update({ ...parsed.values, updated_at: new Date().toISOString() }).eq('id', 1).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 503, 'Run server/supabase/004_wallet_cashback.sql first.');
+        store.invalidateRewardTables();
+        res.json({ status: 'ok', program: programView(normalizeProgram(data)) });
     });
 
     // ---------------- reward table (database) ----------------

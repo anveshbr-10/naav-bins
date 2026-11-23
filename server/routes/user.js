@@ -9,6 +9,11 @@ const { decodeThumbnail, perceptualHash } = require('../lib/imageHash');
 const { planWasteDeposit, planRedemption, computeImpact, generateVoucherCode, isValidUpiId } = require('../lib/rewards');
 const { istWeek, userStats, computeBadges, computeChallenges } = require('../lib/leagues');
 const { getLeagues } = require('./public');
+const { planCashback, pendingState } = require('../lib/cashback');
+const {
+    walletView, planConvert, planPaymentCreate, generatePaymentCode, parsePaymentCode, effectiveStatus, PAYMENT_TTL_MS, QR_PREFIX,
+} = require('../lib/payments');
+const { istDayStart } = require('../lib/vendors');
 
 const PROFILE_FIELDS = ['id', 'email', 'name', 'role', 'department', 'hostel', 'is_blocked'];
 const pick = (o, keys) => Object.fromEntries(keys.map(k => [k, o[k] ?? null]));
@@ -84,9 +89,12 @@ module.exports = function userRoutes(ctx) {
         }
 
         const { walletBalance, ecoPoints, createdAt } = req.profile;
+        const program = await store.loadProgram();
         res.json({
             status: 'ok',
             user: { ...pick(req.profile, PROFILE_FIELDS), walletBalance, ecoPoints, createdAt },
+            wallet: program.legacy ? null : walletView(ecoPoints, program.pointsPerRupee, walletBalance),
+            cashback: program.active ? { ...pendingState(req.profile, program, now), milestones: program.milestones, instantPct: program.instantPct } : null,
             logs: logs.slice(0, 50),
             redemptions: redemptionsRes.data || [],
             impact: computeImpact(logs, tables.rules),
@@ -220,6 +228,9 @@ module.exports = function userRoutes(ctx) {
             : [];
 
         const bin = { id: session.binId, name: session.binName, stream: session.stream };
+        const program = await store.loadProgram();
+        const bonusSpentToday = program.active ? await store.bonusSpentSince(istDayStart(Date.now())) : 0;
+        const rand = crypto.randomInt(0, 1000000) / 1000000;
         let flag = null;
         const outcome = await store.applyDeposit(req.user.id, (profile, recentLogs) => {
             if (profile.is_blocked) return { reject: { code: 403, message: 'Your account is paused from earning rewards. Please contact the campus team.', template: 'Your account is paused from earning rewards. Please contact the campus team.' } };
@@ -234,9 +245,20 @@ module.exports = function userRoutes(ctx) {
                 imageHash,
                 duplicates: { previous, threshold: config.PHASH_THRESHOLD, userId: req.user.id },
                 gpsDistance: Number.isFinite(session.gps) ? session.gps : null,
+                pointsOnly: program.pointsOnly,
             });
             if (plan.reject && plan.reject.flag) flag = plan.reject.flag;
-            return plan;
+            if (plan.reject || !plan.log.accepted || program.legacy) return plan;
+            // Delayed cashback: split this item's points into instant + pending, release at milestones.
+            const c = planCashback({ points: plan.log.points, profile, program, nowMs: Date.now(), rand, bonusSpentToday });
+            return {
+                ...plan,
+                award: {
+                    instant: c.instant, credit: c.credit, pending_after: c.pendingAfter, cycle_after: c.cycleAfter,
+                    released: c.released, multiplier: c.multiplier, extra: c.extra, expired: c.expired, cycle_item: c.cycleItem,
+                },
+                result: { ...plan.result, cashback: c },
+            };
         });
 
         if (outcome.outcome === 'rejected' && flag) store.recordFlag({ userId: req.user.id, binId: bin.id, ...flag });
@@ -253,8 +275,115 @@ module.exports = function userRoutes(ctx) {
             stream: r.stream,
             binStream: r.binStream,
             rewardAdded: r.reward,
-            pointsAdded: r.points,
+            pointsAdded: r.cashback ? r.cashback.credit : r.points,
+            pointsNominal: r.points,
+            cashback: r.cashback ? {
+                instant: r.cashback.instant, deferred: r.cashback.deferred, released: r.cashback.released,
+                multiplier: r.cashback.multiplier, extra: r.cashback.extra, milestoneHit: r.cashback.milestoneHit,
+                pending: r.cashback.pendingAfter, nextMilestone: r.cashback.nextMilestone, itemsToNext: r.cashback.itemsToNext,
+                expired: r.cashback.expired,
+            } : null,
         });
+    });
+
+    // ---------------- campus wallet (Phase 2) ----------------
+    // Like coins in a UPI app: Eco-Points are redeemed into ₹ in the campus wallet, and the ₹ wallet
+    // pays any exact amount at a campus counter with a one-time code / QR; the counter confirms it
+    // (routes/admin.js) and exactly that amount is deducted.
+    async function walletSnapshot(req) {
+        const program = await store.loadProgram();
+        const profile = await store.getProfile(req.user.id);
+        const [vendors, open, ledger, recent, cash] = await Promise.all([
+            supabase.from('vendors').select('id, name, category, location, labels, max_txn_inr, active').eq('active', true).order('sort').order('name'),
+            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, points, status, expires_at, created_at')
+                .eq('user_id', req.user.id).eq('status', 'Pending').gt('expires_at', new Date().toISOString())
+                .order('created_at', { ascending: false }).limit(1),
+            supabase.from('points_ledger').select('delta, balance_after, kind, ref, created_at')
+                .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30),
+            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at')
+                .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(20),
+            supabase.from('wallet_ledger').select('delta, balance_after, kind, ref, created_at')
+                .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30),
+        ]);
+        for (const r of [vendors, open, ledger, recent]) if (r.error) throw r.error;
+        const now = Date.now();
+        return {
+            wallet: walletView(profile ? profile.ecoPoints : 0, program.pointsPerRupee, profile ? profile.walletBalance : 0),
+            cashWallet: Number(profile && profile.walletBalance) || 0,
+            cashback: program.active ? { ...pendingState(profile, program, now), milestones: program.milestones, instantPct: program.instantPct } : null,
+            vendors: (vendors.data || []).map(v => ({ id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels, maxTxnInr: v.max_txn_inr })),
+            openPayment: open.data && open.data[0] ? { ...open.data[0], qr: QR_PREFIX + open.data[0].code } : null,
+            ledger: ledger.data || [],
+            walletLedger: cash.error ? [] : (cash.data || []), // [] until the updated 004 is run
+            payments: (recent.data || []).map(p => ({ ...p, status: effectiveStatus(p, now) })),
+        };
+    }
+
+    app.get('/api/wallet', verifyToken, loadProfile, async (req, res) => {
+        const program = await store.loadProgram();
+        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
+        res.json({ status: 'ok', ...(await walletSnapshot(req)) });
+    });
+
+    // Redeem Eco-Points into ₹ in the campus wallet (whole rupees; pointsPerRupee points = ₹1).
+    app.post('/api/wallet/convert', verifyToken, loadProfile, limiters.write, async (req, res) => {
+        const program = await store.loadProgram();
+        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
+        const plan = planConvert(req.profile, req.body && req.body.amountInr, program);
+        if (plan.reject) return fail(res, plan.reject.code, plan.reject.template, plan.reject.params);
+        const { data, error } = await supabase.rpc('naav_convert_points', { p_user: req.user.id, p_points: plan.points, p_inr: plan.amount });
+        if (error) throw error;
+        if (data === 'insufficient') return fail(res, 409, 'Not enough Eco-Points. Please refresh and try again.');
+        if (data !== 'ok') return fail(res, 400, 'Invalid request');
+        const profile = await store.getProfile(req.user.id);
+        res.json({ status: 'ok', converted: { points: plan.points, inr: plan.amount }, wallet: walletView(profile.ecoPoints, program.pointsPerRupee, profile.walletBalance) });
+    });
+
+    // Start a payment: exact amount at one counter. Any earlier open code of this student is cancelled,
+    // so only one code is live at a time. Points move only when the counter confirms.
+    app.post('/api/pay/create', verifyToken, loadProfile, limiters.write, async (req, res) => {
+        const program = await store.loadProgram();
+        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
+        const vendorId = str(req.body && req.body.vendorId);
+        const vendor = /^[a-z0-9-]{2,40}$/.test(vendorId) ? await store.getVendor(vendorId) : null;
+        const plan = planPaymentCreate(req.profile, vendor, req.body && req.body.amountInr, program);
+        if (plan.reject) return fail(res, plan.reject.code, plan.reject.template, plan.reject.params);
+
+        const { error: cancelError } = await supabase.from('vendor_payments').update({ status: 'Cancelled' })
+            .eq('user_id', req.user.id).eq('status', 'Pending');
+        if (cancelError) throw cancelError;
+
+        const expiresAt = new Date(Date.now() + PAYMENT_TTL_MS).toISOString();
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const row = { code: generatePaymentCode(), user_id: req.user.id, vendor_id: vendor.id, amount_inr: plan.amount, points: plan.points, expires_at: expiresAt };
+            const { data, error } = await supabase.from('vendor_payments').insert([row]).select('code, vendor_id, amount_inr, points, status, expires_at, created_at').maybeSingle();
+            if (error && error.code === '23505') continue; // code collision: try another
+            if (error) throw error;
+            return res.json({ status: 'ok', payment: { ...data, qr: QR_PREFIX + data.code, vendorName: vendor.name, vendorLabels: vendor.labels } });
+        }
+        return fail(res, 409, 'Your account is busy. Please try again.');
+    });
+
+    // The student's app polls this to see when the counter has confirmed.
+    app.get('/api/pay/:code', verifyToken, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('vendor_payments')
+            .select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at')
+            .eq('code', code).eq('user_id', req.user.id).maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 404, 'No payment with this code.');
+        res.json({ status: 'ok', payment: { ...data, status: effectiveStatus(data, Date.now()) } });
+    });
+
+    app.post('/api/pay/:code/cancel', verifyToken, limiters.write, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Invalid request');
+        const { data, error } = await supabase.from('vendor_payments').update({ status: 'Cancelled' })
+            .eq('code', code).eq('user_id', req.user.id).eq('status', 'Pending').select('code').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 409, 'This code was already used or cancelled.');
+        res.json({ status: 'ok' });
     });
 
     // REDEEM: cost and type come from the database catalogue, never from the client.
@@ -264,6 +393,8 @@ module.exports = function userRoutes(ctx) {
         const { catalog } = await store.loadRewardTables();
         const entry = typeof item === 'string' && Object.prototype.hasOwnProperty.call(catalog, item) ? catalog[item] : null;
         if (!entry) return fail(res, 400, 'Unknown reward item');
+        // The campus wallet stays on campus: once it is set up, money can't be withdrawn.
+        if (entry.type === 'money' && !(await store.loadProgram()).legacy) return fail(res, 403, 'Wallet money can only be spent at campus counters.');
         if (entry.type === 'money' && !isValidUpiId(upiId)) return fail(res, 400, 'Please enter a valid UPI ID (e.g. name@bank).');
 
         const outcome = await store.applyRedemption(req.user.id, profile =>
