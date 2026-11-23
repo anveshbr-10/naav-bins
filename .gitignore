@@ -36,3 +36,6 @@ desktop.ini
 
 # Deployment tool folders
 .vercel/
+
+# Personal local-only project notes
+PROJECT_GUIDE.md
