@@ -1,19 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useNavigate } from 'react-router-dom';
-import { Store, Search, Loader2, CheckCircle2, XCircle, Ticket, MapPin, ListChecks, ScanQrCode, IndianRupee, Camera } from 'lucide-react';
+import { Store, Search, Loader2, CheckCircle2, XCircle, MapPin, ScanQrCode, IndianRupee, Camera } from 'lucide-react';
 import AppShell from './layout';
 import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
 import { useI18n, tk, localized } from './i18n';
 import { formatDateTime } from './format';
-import { STATUS_LABEL } from './waste';
 
 const PAY_STATUS_LABEL = {
   Pending: tk('Waiting'), Completed: tk('Paid'), Expired: tk('Expired'), Cancelled: tk('Cancelled'), Refunded: tk('Refunded'),
 };
 
-// Normalises typed or scanned input: "NAAVPAY:NP-…" (student's payment QR), "NP-…" or "NB-…".
+// Normalises typed or scanned input: "NAAVPAY:NP-…" (student's payment QR) or "NP-…".
 function cleanCode(raw) {
   let c = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
   if (c.startsWith('NAAVPAY:')) c = c.slice(8);
@@ -123,8 +122,7 @@ function QrScan({ onCode, onClose }) {
 }
 
 // Canteen / snack stall / stationery / print-centre counter.
-//   NP- codes: campus-wallet payments of an exact amount (Phase 2). Confirming deducts exactly that.
-//   NB- codes: older fixed vouchers, still valid until used.
+//   NP- codes: campus-wallet payments of an exact amount. Confirming deducts exactly that.
 // Staff belong to one counter and only see codes for it; each code works once; daily limits apply
 // (all enforced by the API and the database).
 export default function Counter() {
@@ -132,12 +130,11 @@ export default function Counter() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [code, setCode] = useState('');
-  const [voucher, setVoucher] = useState(null);
   const [payment, setPayment] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [state, setState] = useState('idle'); // idle | looking | claiming | claimed
   const [error, setError] = useState(null);
-  const [me, setMe] = useState(null); // { vendor, today }
+  const [me, setMe] = useState(null); // { vendor, payments, paymentsInr }
   const [meError, setMeError] = useState(null);
 
   const handleAuth = useCallback((err) => {
@@ -159,17 +156,11 @@ export default function Counter() {
   const lookupCode = useCallback(async (value) => {
     const c = cleanCode(value);
     setError(null);
-    setVoucher(null);
     setPayment(null);
     setState('looking');
     try {
-      if (c.startsWith('NP-')) {
-        const res = await api.get(`/api/counter/payment/${encodeURIComponent(c)}`);
-        setPayment(res.data.payment);
-      } else {
-        const res = await api.get(`/api/counter/voucher/${encodeURIComponent(c)}`);
-        setVoucher(res.data.voucher);
-      }
+      const res = await api.get(`/api/counter/payment/${encodeURIComponent(c)}`);
+      setPayment(res.data.payment);
       setState('idle');
     } catch (err) {
       if (handleAuth(err)) return;
@@ -196,22 +187,6 @@ export default function Counter() {
     }
   };
 
-  const claim = async () => {
-    setError(null);
-    setState('claiming');
-    try {
-      await api.post(`/api/counter/voucher/${encodeURIComponent(voucher.code)}/claim`);
-      setVoucher({ ...voucher, status: 'Claimed', processed_at: new Date().toISOString() });
-      setState('claimed');
-      loadMe();
-    } catch (err) {
-      if (handleAuth(err)) return;
-      setError(apiErrorMessage(err, tk('Could not mark this code as used.')));
-      setState('idle');
-    }
-  };
-
-  const usable = voucher && voucher.status === 'Issued';
   const payable = payment && payment.status === 'Pending';
 
   return (
@@ -224,7 +199,7 @@ export default function Counter() {
             <p className="text-sm text-gray-500">
               {me?.vendor
                 ? <span className="inline-flex items-center gap-1"><MapPin size={12} aria-hidden="true" /> {me.vendor.location || t('Campus counter')}</span>
-                : me ? t('Admin: all counters') : t('Check a student\'s campus-credit code and mark it as used.')}
+                : me ? t('Admin: all counters') : t('Scan a student\'s payment QR and confirm the amount.')}
             </p>
           </div>
         </div>
@@ -240,9 +215,9 @@ export default function Counter() {
 
         <p className="mt-5 mb-2 text-xs font-semibold text-gray-500 text-center">{t('or type the code')}</p>
         <form onSubmit={lookup} className="flex gap-2">
-          <label className="sr-only" htmlFor="voucher-code">{t('Voucher code')}</label>
+          <label className="sr-only" htmlFor="payment-code">{t('Payment code')}</label>
           <input
-            id="voucher-code"
+            id="payment-code"
             value={code}
             onChange={(e) => { setCode(e.target.value); setState('idle'); }}
             placeholder="NP-ABCD-2345"
@@ -290,39 +265,7 @@ export default function Counter() {
           </div>
         )}
 
-        {voucher && (
-          <div className={`mt-6 rounded-2xl border p-6 ${usable ? 'border-green-200 bg-white' : 'border-gray-200 bg-white'}`}>
-            <div className="flex items-start gap-3">
-              {state === 'claimed' ? <CheckCircle2 className="text-green-600 flex-shrink-0" size={28} aria-hidden="true" />
-                : usable ? <Ticket className="text-green-600 flex-shrink-0" size={28} aria-hidden="true" />
-                  : <XCircle className="text-red-500 flex-shrink-0" size={28} aria-hidden="true" />}
-              <div className="min-w-0">
-                <p className="text-lg font-bold text-gray-900">{voucher.item}</p>
-                <p className="font-mono text-sm text-gray-600">{voucher.code}</p>
-                <p className="text-sm text-gray-500 mt-1">{t('Issued to {name} on {date}', { name: voucher.userName || t('a student'), date: formatDateTime(voucher.created_at) })}</p>
-                {voucher.vendor && <p className="text-sm text-gray-500">{t('Valid at: {place}', { place: voucher.vendor })}</p>}
-                <p className={`mt-2 inline-block text-xs font-bold px-2 py-0.5 rounded-full border ${usable ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-                  {t(STATUS_LABEL[voucher.status] || voucher.status)}
-                </p>
-                {!usable && state !== 'claimed' && (
-                  <p className="mt-2 text-sm text-red-600">
-                    {voucher.status === 'Claimed'
-                      ? t('Already used on {date}. Do not accept it again.', { date: formatDateTime(voucher.processed_at) })
-                      : t('This code is not valid any more.')}
-                  </p>
-                )}
-              </div>
-            </div>
-            {usable && state !== 'claimed' && (
-              <button onClick={claim} disabled={state === 'claiming'} className="mt-5 w-full py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2">
-                {state === 'claiming' && <Loader2 size={18} className="animate-spin" />} {t('Give the credit and mark as used')}
-              </button>
-            )}
-            {state === 'claimed' && <p role="status" className="mt-4 text-sm font-semibold text-green-700">{t('Done. The code can no longer be used.')}</p>}
-          </div>
-        )}
-
-        {me && (me.payments || []).length > 0 && (
+        {me && (
           <div className="mt-8">
             <h2 className="font-bold text-gray-800 flex items-center gap-2 mb-1"><IndianRupee size={18} aria-hidden="true" /> {t('Payments today')}</h2>
             <p className="text-xs text-gray-500 mb-3">
@@ -330,6 +273,7 @@ export default function Counter() {
                 ? t('₹{n} of ₹{limit} today', { n: me.paymentsInr, limit: me.vendor.dailyLimitInr })
                 : t('₹{n} today', { n: me.paymentsInr })}
             </p>
+            {(me.payments || []).length === 0 ? <p className="text-sm text-gray-400">{t('No payments yet today.')}</p> : (
             <ul className="divide-y divide-gray-100 border border-gray-100 rounded-xl bg-white">
               {me.payments.map((p) => (
                 <li key={p.code} className="p-3 flex justify-between gap-3 text-sm">
@@ -341,32 +285,10 @@ export default function Counter() {
                 </li>
               ))}
             </ul>
-          </div>
-        )}
-
-        {me && (
-          <div className="mt-8">
-            <h2 className="font-bold text-gray-800 flex items-center gap-2 mb-1"><ListChecks size={18} aria-hidden="true" /> {t('Claimed today')}</h2>
-            <p className="text-xs text-gray-500 mb-3">
-              {me.vendor
-                ? t('{n} of {limit} vouchers today', { n: me.today.length, limit: me.vendor.dailyClaimLimit })
-                : t('{n} vouchers today', { n: me.today.length })}
-            </p>
-            {me.today.length === 0 ? <p className="text-sm text-gray-400">{t('No vouchers claimed yet today.')}</p> : (
-              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-xl bg-white">
-                {me.today.map((c) => (
-                  <li key={c.code} className="p-3 flex justify-between gap-3 text-sm">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-800 truncate">{c.item}</p>
-                      <p className="text-xs text-gray-500 font-mono">{c.code} · {c.userName || t('a student')}</p>
-                    </div>
-                    <span className="text-xs text-gray-500 flex-shrink-0">{formatDateTime(c.processed_at)}</span>
-                  </li>
-                ))}
-              </ul>
             )}
           </div>
         )}
+
       </div>
     </AppShell>
   );

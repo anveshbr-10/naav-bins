@@ -1,4 +1,4 @@
-// Signed-in user endpoints: profile, dashboard, bin scans, deposits, redemptions, challenges.
+// Signed-in user endpoints: profile, dashboard, bin scans, deposits, campus wallet, challenges.
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const { verifyBinQr } = require('../lib/binQr');
 const { checkGeofence } = require('../lib/geo');
 const { decodeThumbnail, perceptualHash } = require('../lib/imageHash');
-const { planWasteDeposit, planRedemption, computeImpact, generateVoucherCode, isValidUpiId } = require('../lib/rewards');
+const { planWasteDeposit, computeImpact } = require('../lib/rewards');
 const { istWeek, userStats, computeBadges, computeChallenges } = require('../lib/leagues');
 const { getLeagues } = require('./public');
 const { planCashback, pendingState } = require('../lib/cashback');
@@ -52,19 +52,16 @@ module.exports = function userRoutes(ctx) {
         res.json({ status: 'ok', profile: pick(data, PROFILE_FIELDS) });
     });
 
-    // Dashboard: balances, recent activity, redemptions, impact, streak, badges, weekly challenges, rank.
+    // Dashboard: balances, recent activity, impact, streak, badges, weekly challenges, rank.
     app.get('/api/dashboard', verifyToken, loadProfile, async (req, res) => {
         const now = Date.now();
-        const [logsRes, redemptionsRes, tables] = await Promise.all([
+        const [logsRes, tables] = await Promise.all([
             supabase.from('waste_logs')
                 .select('id, created_at, bin_id, bin_name, waste_type, stream, accepted, reject_reason, reward_inr, points, est_weight_kg, measured_weight_kg')
                 .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(5000),
-            supabase.from('redemptions').select('code, item, type, cost, status, upi_id, vendor, created_at, processed_at')
-                .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(50),
             store.loadRewardTables(),
         ]);
         if (logsRes.error) throw logsRes.error;
-        if (redemptionsRes.error) throw redemptionsRes.error;
         const logs = logsRes.data || [];
 
         const week = istWeek(now);
@@ -93,10 +90,9 @@ module.exports = function userRoutes(ctx) {
         res.json({
             status: 'ok',
             user: { ...pick(req.profile, PROFILE_FIELDS), walletBalance, ecoPoints, createdAt },
-            wallet: program.legacy ? null : walletView(ecoPoints, program.pointsPerRupee, walletBalance),
+            wallet: walletView(ecoPoints, program.pointsPerRupee, walletBalance),
             cashback: program.active ? { ...pendingState(req.profile, program, now), milestones: program.milestones, instantPct: program.instantPct } : null,
             logs: logs.slice(0, 50),
-            redemptions: redemptionsRes.data || [],
             impact: computeImpact(logs, tables.rules),
             progress: {
                 streak: stats.streak,
@@ -248,7 +244,7 @@ module.exports = function userRoutes(ctx) {
                 pointsOnly: program.pointsOnly,
             });
             if (plan.reject && plan.reject.flag) flag = plan.reject.flag;
-            if (plan.reject || !plan.log.accepted || program.legacy) return plan;
+            if (plan.reject || !plan.log.accepted) return plan;
             // Delayed cashback: split this item's points into instant + pending, release at milestones.
             const c = planCashback({ points: plan.log.points, profile, program, nowMs: Date.now(), rand, bonusSpentToday });
             return {
@@ -295,17 +291,17 @@ module.exports = function userRoutes(ctx) {
         const profile = await store.getProfile(req.user.id);
         const [vendors, open, ledger, recent, cash] = await Promise.all([
             supabase.from('vendors').select('id, name, category, location, labels, max_txn_inr, active').eq('active', true).order('sort').order('name'),
-            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, points, status, expires_at, created_at')
+            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, status, expires_at, created_at')
                 .eq('user_id', req.user.id).eq('status', 'Pending').gt('expires_at', new Date().toISOString())
                 .order('created_at', { ascending: false }).limit(1),
             supabase.from('points_ledger').select('delta, balance_after, kind, ref, created_at')
                 .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30),
-            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at')
+            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, status, expires_at, created_at, completed_at')
                 .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(20),
             supabase.from('wallet_ledger').select('delta, balance_after, kind, ref, created_at')
                 .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30),
         ]);
-        for (const r of [vendors, open, ledger, recent]) if (r.error) throw r.error;
+        for (const r of [vendors, open, ledger, recent, cash]) if (r.error) throw r.error;
         const now = Date.now();
         return {
             wallet: walletView(profile ? profile.ecoPoints : 0, program.pointsPerRupee, profile ? profile.walletBalance : 0),
@@ -314,21 +310,18 @@ module.exports = function userRoutes(ctx) {
             vendors: (vendors.data || []).map(v => ({ id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels, maxTxnInr: v.max_txn_inr })),
             openPayment: open.data && open.data[0] ? { ...open.data[0], qr: QR_PREFIX + open.data[0].code } : null,
             ledger: ledger.data || [],
-            walletLedger: cash.error ? [] : (cash.data || []), // [] until the updated 004 is run
+            walletLedger: cash.data || [],
             payments: (recent.data || []).map(p => ({ ...p, status: effectiveStatus(p, now) })),
         };
     }
 
     app.get('/api/wallet', verifyToken, loadProfile, async (req, res) => {
-        const program = await store.loadProgram();
-        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
         res.json({ status: 'ok', ...(await walletSnapshot(req)) });
     });
 
     // Redeem Eco-Points into ₹ in the campus wallet (whole rupees; pointsPerRupee points = ₹1).
     app.post('/api/wallet/convert', verifyToken, loadProfile, limiters.write, async (req, res) => {
         const program = await store.loadProgram();
-        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
         const plan = planConvert(req.profile, req.body && req.body.amountInr, program);
         if (plan.reject) return fail(res, plan.reject.code, plan.reject.template, plan.reject.params);
         const { data, error } = await supabase.rpc('naav_convert_points', { p_user: req.user.id, p_points: plan.points, p_inr: plan.amount });
@@ -340,25 +333,27 @@ module.exports = function userRoutes(ctx) {
     });
 
     // Start a payment: exact amount at one counter. Any earlier open code of this student is cancelled,
-    // so only one code is live at a time. Points move only when the counter confirms.
+    // so only one code is live at a time. Rupees move only when the counter confirms.
     app.post('/api/pay/create', verifyToken, loadProfile, limiters.write, async (req, res) => {
         const program = await store.loadProgram();
-        if (program.legacy) return fail(res, 503, 'The campus wallet is not set up yet. Please try again later.');
         const vendorId = str(req.body && req.body.vendorId);
         const vendor = /^[a-z0-9-]{2,40}$/.test(vendorId) ? await store.getVendor(vendorId) : null;
         const plan = planPaymentCreate(req.profile, vendor, req.body && req.body.amountInr, program);
         if (plan.reject) return fail(res, plan.reject.code, plan.reject.template, plan.reject.params);
 
-        const { error: cancelError } = await supabase.from('vendor_payments').update({ status: 'Cancelled' })
-            .eq('user_id', req.user.id).eq('status', 'Pending');
-        if (cancelError) throw cancelError;
-
         const expiresAt = new Date(Date.now() + PAYMENT_TTL_MS).toISOString();
         for (let attempt = 0; attempt < 3; attempt++) {
-            const row = { code: generatePaymentCode(), user_id: req.user.id, vendor_id: vendor.id, amount_inr: plan.amount, points: plan.points, expires_at: expiresAt };
-            const { data, error } = await supabase.from('vendor_payments').insert([row]).select('code, vendor_id, amount_inr, points, status, expires_at, created_at').maybeSingle();
-            if (error && error.code === '23505') continue; // code collision: try another
+            const code = generatePaymentCode();
+            // Cancels any open code and inserts the new one in one transaction (only one code is ever live).
+            const { data: result, error } = await supabase.rpc('naav_create_payment', {
+                p_user: req.user.id, p_code: code, p_vendor: vendor.id, p_amount: plan.amount, p_expires: expiresAt,
+            });
             if (error) throw error;
+            if (result === 'duplicate') continue; // code collision: try another
+            if (result !== 'ok') return fail(res, 400, 'Invalid request');
+            const { data, error: readError } = await supabase.from('vendor_payments')
+                .select('code, vendor_id, amount_inr, status, expires_at, created_at').eq('code', code).maybeSingle();
+            if (readError) throw readError;
             return res.json({ status: 'ok', payment: { ...data, qr: QR_PREFIX + data.code, vendorName: vendor.name, vendorLabels: vendor.labels } });
         }
         return fail(res, 409, 'Your account is busy. Please try again.');
@@ -369,7 +364,7 @@ module.exports = function userRoutes(ctx) {
         const code = parsePaymentCode(req.params.code);
         if (!code) return fail(res, 400, 'Invalid request');
         const { data, error } = await supabase.from('vendor_payments')
-            .select('code, vendor_id, amount_inr, points, status, expires_at, created_at, completed_at')
+            .select('code, vendor_id, amount_inr, status, expires_at, created_at, completed_at')
             .eq('code', code).eq('user_id', req.user.id).maybeSingle();
         if (error) throw error;
         if (!data) return fail(res, 404, 'No payment with this code.');
@@ -386,22 +381,4 @@ module.exports = function userRoutes(ctx) {
         res.json({ status: 'ok' });
     });
 
-    // REDEEM: cost and type come from the database catalogue, never from the client.
-    app.post('/api/redeem', verifyToken, loadProfile, limiters.write, async (req, res) => {
-        const item = req.body && req.body.item;
-        const upiId = req.body && req.body.upiId;
-        const { catalog } = await store.loadRewardTables();
-        const entry = typeof item === 'string' && Object.prototype.hasOwnProperty.call(catalog, item) ? catalog[item] : null;
-        if (!entry) return fail(res, 400, 'Unknown reward item');
-        // The campus wallet stays on campus: once it is set up, money can't be withdrawn.
-        if (entry.type === 'money' && !(await store.loadProgram()).legacy) return fail(res, 403, 'Wallet money can only be spent at campus counters.');
-        if (entry.type === 'money' && !isValidUpiId(upiId)) return fail(res, 400, 'Please enter a valid UPI ID (e.g. name@bank).');
-
-        const outcome = await store.applyRedemption(req.user.id, profile =>
-            planRedemption(profile, { catalog, item, upiId, code: generateVoucherCode() }));
-        if (outcome.outcome === 'not_found') return fail(res, 404, 'Profile not found');
-        if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.template || outcome.message, outcome.params);
-        if (outcome.outcome === 'conflict') return fail(res, 409, 'Your account is busy. Please try again.');
-        res.json({ status: 'ok', redeemed: outcome.result });
-    });
 };

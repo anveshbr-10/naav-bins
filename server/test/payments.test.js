@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     generatePaymentCode, parsePaymentCode, walletView, planConvert, planPaymentCreate, effectiveStatus, planPaymentAccess, confirmError, PAY_CODE_RE,
+    parseRefundReason, refundError, REFUND_WINDOW_DAYS,
 } = require('../lib/payments');
 
 const PROGRAM = { pointsPerRupee: 10 };
@@ -34,8 +35,8 @@ test('convert: whole rupees only, never more than the coins cover', () => {
 });
 
 test('create: any whole amount up to the counter limit, if the ₹ wallet covers it', () => {
-    assert.deepEqual(planPaymentCreate({ walletBalance: 2 }, UTSAV, 2, PROGRAM), { points: 0, amount: 2 });
-    assert.deepEqual(planPaymentCreate({ walletBalance: 70, ecoPoints: 0 }, UTSAV, 70, PROGRAM), { points: 0, amount: 70 });
+    assert.deepEqual(planPaymentCreate({ walletBalance: 2 }, UTSAV, 2, PROGRAM), { amount: 2 });
+    assert.deepEqual(planPaymentCreate({ walletBalance: 70, ecoPoints: 0 }, UTSAV, 70, PROGRAM), { amount: 70 });
     const short = planPaymentCreate({ walletBalance: 1, ecoPoints: 1e6 }, UTSAV, 2, PROGRAM);
     assert.equal(short.reject.code, 400, 'coins must be redeemed first');
     assert.equal(short.reject.params.have, 1);
@@ -69,4 +70,22 @@ test('confirm results map to clear errors', () => {
     assert.equal(confirmError('daily_limit').code, 429);
     assert.equal(confirmError('wrong_vendor').code, 403);
     assert.equal(confirmError('weird').code, 500);
+});
+
+test('refund reason: trimmed, 3–200 characters', () => {
+    assert.deepEqual(parseRefundReason('  Counter   charged twice '), { reason: 'Counter charged twice' });
+    for (const bad of [undefined, null, 42, '', '  ', 'no', 'x'.repeat(201)]) {
+        assert.equal(parseRefundReason(bad).reject.code, 400, String(bad));
+    }
+});
+
+test('refund result -> HTTP error', () => {
+    assert.equal(refundError('ok'), null);
+    assert.equal(refundError('no_reason').code, 400);
+    assert.equal(refundError('not_found').code, 404);
+    assert.equal(refundError('not_completed').code, 409);
+    const old = refundError('too_old');
+    assert.equal(old.code, 409);
+    assert.deepEqual(old.params, { n: REFUND_WINDOW_DAYS });
+    assert.equal(refundError('weird').code, 500);
 });

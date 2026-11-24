@@ -3,37 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import api, { apiErrorMessage, apiStatus } from './api';
 import { useAuth } from './authContext';
 import { useI18n, localized, tk } from './i18n';
-import RedeemModal from './redeemModal';
 import PayModal from './payModal';
 import ConvertModal from './convertModal';
 import WalletHistory from './walletHistory';
 import { formatCo2, formatDate, formatDateTime, formatKg } from './format';
 import AppShell from './layout';
 import { useTheme } from './themeContext';
-import { WASTE_TYPES, WASTE_BY_NAME, STREAMS, streamOf, STATUS_LABEL } from './waste';
+import { WASTE_TYPES, WASTE_BY_NAME, STREAMS, streamOf } from './waste';
 import { StreakAndRank, Challenges, Badges } from './progress';
 import {
-  Wallet, Leaf, LogOut, History, Ticket, MapPin, ScanQrCode, Gift, Receipt, RefreshCw, Loader2, TreePine,
-  WifiOff, Map as MapIcon, Coffee, PenTool, Printer, Users, Scale, AlertTriangle, Store, Sparkles, ArrowRight,
+  Wallet, Leaf, LogOut, History, MapPin, ScanQrCode, RefreshCw, Loader2, TreePine,
+  WifiOff, Map as MapIcon, Users, Scale, AlertTriangle, Store, Sparkles, ArrowRight,
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-
-// Visual style per redeemable campus credit (amounts and text come from the server catalogue).
-function itemStyle(item) {
-  if (/canteen/i.test(item)) return { Icon: Coffee, bg: 'bg-amber-100', fg: 'text-amber-700' };
-  if (/stationery/i.test(item)) return { Icon: PenTool, bg: 'bg-indigo-100', fg: 'text-indigo-600' };
-  if (/print/i.test(item)) return { Icon: Printer, bg: 'bg-blue-100', fg: 'text-blue-600' };
-  return { Icon: Gift, bg: 'bg-emerald-100', fg: 'text-emerald-600' };
-}
-
-const STATUS_STYLE = {
-  Issued: 'bg-green-100 text-green-700 border-green-200',
-  Pending: 'bg-amber-100 text-amber-700 border-amber-200',
-  Paid: 'bg-blue-100 text-blue-700 border-blue-200',
-  Claimed: 'bg-gray-100 text-gray-600 border-gray-200',
-  Rejected: 'bg-red-100 text-red-700 border-red-200',
-  Cancelled: 'bg-red-100 text-red-700 border-red-200',
-};
 
 // Department + hostel, for campus leagues. Shown until both are chosen.
 function TeamSetup({ user, onSaved }) {
@@ -102,7 +84,6 @@ export default function Dashboard() {
   const [loadError, setLoadError] = useState(null);
   const [catalog, setCatalog] = useState(null);
   const [catalogFailed, setCatalogFailed] = useState(false);
-  const [redeemEntry, setRedeemEntry] = useState(null);
   const [payOpen, setPayOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [walletKey, setWalletKey] = useState(0);
@@ -130,7 +111,7 @@ export default function Dashboard() {
 
   const fetchCatalog = useCallback(() => api.get('/api/rewards/catalog')
     .then((res) => {
-      setCatalog({ rewards: res.data.rewards || [], redeem: res.data.redeem || [] });
+      setCatalog({ rewards: res.data.rewards || [] });
       setCatalogFailed(false);
     })
     .catch(() => setCatalogFailed(true)), []);
@@ -200,7 +181,6 @@ export default function Dashboard() {
   // ---------- Derived data ----------
   const { user, impact, progress } = data;
   const logs = Array.isArray(data.logs) ? data.logs : [];
-  const redemptions = Array.isArray(data.redemptions) ? data.redemptions : [];
 
   const earningsData = [];
   for (let i = 6; i >= 0; i--) {
@@ -217,10 +197,8 @@ export default function Dashboard() {
     .filter((d) => d.value > 0);
 
   const rewardByType = Object.fromEntries((catalog?.rewards || []).map((r) => [r.wasteType, r]));
-  const vouchers = (catalog?.redeem || []).filter((r) => r.type === 'points');
-  const withdrawal = (catalog?.redeem || []).find((r) => r.type === 'money');
   const needsTeam = !user.department || !user.hostel;
-  const wallet = data.wallet || null;     // campus wallet (null until 004_wallet_cashback.sql is run)
+  const { wallet } = data;                // Eco-Points, ₹ campus wallet and the redeem rate
   const cashback = data.cashback || null; // pending bonus (null when the programme is off)
   const refreshWallet = () => { fetchUserData(); setWalletKey((k) => k + 1); };
 
@@ -244,7 +222,7 @@ export default function Dashboard() {
       {needsTeam && <TeamSetup user={user} onSaved={() => { fetchUserData(); reloadProfile(); }} />}
 
       {/* WALLET: Eco-Points (coins) -> redeem into rupees -> spend only at campus counters */}
-      {wallet ? (
+      {wallet && (
         <section aria-label={t('Your wallet')} className="mb-8 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
             {/* Eco-Points (coins) */}
@@ -315,40 +293,6 @@ export default function Dashboard() {
             <p className="px-6 pb-4 -mt-2 text-xs text-gray-500">{t('Recycle before {date} to keep it', { date: formatDate(cashback.expiresAt) })}</p>
           )}
         </section>
-      ) : (
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
-          <div>
-            <h2 className="text-gray-400 font-medium">{t('Wallet balance')}</h2>
-            <p className="text-4xl font-bold text-green-600">₹{user.walletBalance ?? 0}</p>
-            {withdrawal && (
-              <button onClick={() => setRedeemEntry(withdrawal)} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded mt-2 font-bold hover:bg-green-200">
-                {t('Withdraw ₹{n} to UPI', { n: withdrawal.cost })}
-              </button>
-            )}
-          </div>
-          <Wallet className="text-green-600" size={40} aria-hidden="true" />
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
-          <div>
-            <h2 className="text-gray-400 font-medium">{t('Eco Points')}</h2>
-            <p className="text-4xl font-bold text-blue-600">{user.ecoPoints ?? 0}</p>
-            <p className="text-xs text-gray-500 mt-1">{t('Redeem for campus credits below')}</p>
-          </div>
-          <Leaf className="text-blue-600" size={40} aria-hidden="true" />
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
-          <div>
-            <h2 className="text-gray-400 font-medium">{t('CO₂ saved')} <span className="text-xs">{t('(est.)')}</span></h2>
-            <p className="text-4xl font-bold text-yellow-600">{formatCo2(impact?.co2Kg)}</p>
-            <p className="text-xs text-gray-500 mt-1">
-              {t('{n} items · {kg} recycled', { n: impact?.items ?? 0, kg: formatKg(impact?.wasteKg) })}
-              {impact?.measuredItems ? ` · ${t('{n} weighed by the bin', { n: impact.measuredItems })}` : ''}
-            </p>
-          </div>
-          <TreePine className="text-yellow-600" size={40} aria-hidden="true" />
-        </div>
-      </div>
       )}
 
       {/* PRIMARY ACTIONS */}
@@ -447,88 +391,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* REWARDS SHOP: campus credits (old fixed vouchers; hidden once the wallet replaces them) */}
-      {(!wallet || vouchers.length > 0) && (
-      <div className="mb-10">
-        <h3 className="text-2xl font-bold mb-1 text-gray-800 flex items-center gap-2">
-          <Ticket className="text-blue-600" /> {t('Campus credits')}
-        </h3>
-        <p className="text-sm text-gray-500 mb-6">{wallet ? t('Spend your campus wallet at the canteen, snack stall, stationery store and print centre.') : t('Redeem Eco Points for credits at the canteen, stationery store and print centre. Show the code at the counter.')}</p>
-        {catalogFailed && !catalog ? (
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-500">
-            {t('Could not load rewards.')}{' '}
-            <button onClick={fetchCatalog} className="text-green-700 font-bold underline">{t('Retry')}</button>
-          </div>
-        ) : !catalog ? (
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center text-gray-400 flex items-center justify-center gap-2">
-            <Loader2 className="animate-spin" size={18} /> {t('Loading rewards…')}
-          </div>
-        ) : wallet && vouchers.length === 0 ? (
-          <div className="bg-gradient-to-br from-green-50 to-white border border-green-200 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-            <div>
-              <p className="font-bold text-gray-900">{t('Pay any amount: ₹2 for a photocopy, ₹70 for a record book')}</p>
-              <p className="text-sm text-gray-600 mt-1">{t('Choose the counter and amount, then show the one-time code. Only that amount is used; the rest stays in your wallet.')}</p>
-            </div>
-            <button onClick={() => setPayOpen(true)} className="px-5 py-3 rounded-xl font-bold bg-green-600 text-white hover:bg-green-700 flex items-center justify-center gap-2 flex-shrink-0">
-              <Store size={18} aria-hidden="true" /> {t('Pay at a counter')}
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-            {vouchers.map((v) => {
-              const { Icon, bg, fg } = itemStyle(v.item);
-              const affordable = (user.ecoPoints ?? 0) >= v.cost;
-              return (
-                <div key={v.item} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition flex flex-col">
-                  <div className={`${bg} w-12 h-12 rounded-full flex items-center justify-center mb-4`}><Icon className={fg} /></div>
-                  <h4 className="text-lg font-bold text-gray-900">{localized(v, 'item', lang)}</h4>
-                  <p className="text-gray-500 text-sm">{localized(v, 'description', lang)}</p>
-                  {v.vendor && <p className="text-xs text-gray-400 mt-1 mb-4 flex items-center gap-1"><MapPin size={12} aria-hidden="true" /> {localized(v, 'vendor', lang)}</p>}
-                  <div className="flex justify-between items-center mt-auto pt-2">
-                    <span className="font-bold text-blue-600">{t('{n} pts', { n: v.cost })}</span>
-                    <button
-                      onClick={() => setRedeemEntry(v)}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold ${affordable ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-100 text-gray-600'}`}
-                    >
-                      {affordable ? t('Redeem') : t('Need {n} more', { n: v.cost - (user.ecoPoints ?? 0) })}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      )}
-
-      {wallet && <WalletHistory refreshKey={walletKey} />}
-
-      {/* REDEMPTION HISTORY */}
-      <div className="mb-10">
-        <h3 className="text-xl font-bold mb-4 text-gray-700 flex items-center gap-2"><Receipt /> {t('Redemption history')}</h3>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          {redemptions.length > 0 ? (
-            redemptions.slice(0, 10).map((r) => (
-              <div key={r.code} className="p-4 border-b border-gray-100 last:border-0 flex justify-between items-center gap-4 hover:bg-gray-50">
-                <div className="min-w-0">
-                  <p className="font-bold text-gray-800">{r.type === 'money' ? t('UPI withdrawal') : r.item}</p>
-                  <p className="text-xs text-gray-500">{formatDateTime(r.created_at)}</p>
-                  <p className="text-xs font-mono text-gray-600 mt-1">{t('Code')}: {r.code}{r.upi_id ? ` · ${r.upi_id}` : ''}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <span className="font-bold text-gray-700">{r.type === 'money' ? `-₹${r.cost}` : t('-{n} pts', { n: r.cost })}</span>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[r.status] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-                    {t(STATUS_LABEL[r.status] || r.status)}
-                  </span>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="p-6 text-center text-gray-500">{t('No redemptions yet. Your vouchers and withdrawals will appear here.')}</div>
-          )}
-        </div>
-      </div>
+      <WalletHistory refreshKey={walletKey} />
 
       {/* RECENT ACTIVITY */}
       <div className="mt-8">
@@ -555,7 +418,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <span className={wrong ? 'text-gray-400 font-bold' : 'text-green-600 font-bold'}>{wrong ? '₹0' : `+₹${log.reward_inr}`}</span>
+                    <span className={wrong ? 'text-gray-400 font-bold' : 'text-green-600 font-bold'}>{wrong ? t('0 pts') : t('+{n} pts', { n: log.points })}</span>
                     <p className="hidden sm:flex text-emerald-600 text-xs font-bold items-center gap-1 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200 max-w-[14rem] truncate">
                       <MapPin size={12} /> {log.bin_name || t('Unknown location')}
                     </p>
@@ -584,16 +447,6 @@ export default function Dashboard() {
 
       {payOpen && <PayModal onClose={() => { setPayOpen(false); refreshWallet(); }} onPaid={refreshWallet} onNeedMoney={() => { setPayOpen(false); setConvertOpen(true); }} />}
       {convertOpen && wallet && <ConvertModal wallet={wallet} onClose={() => setConvertOpen(false)} onConverted={refreshWallet} />}
-      {redeemEntry && (
-        <RedeemModal
-          entry={redeemEntry}
-          walletBalance={user.walletBalance}
-          ecoPoints={user.ecoPoints}
-          onClose={() => setRedeemEntry(null)}
-          onRedeemed={fetchUserData}
-          onUnauthorized={goToLogin}
-        />
-      )}
     </div>
     </AppShell>
   );

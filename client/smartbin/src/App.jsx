@@ -31,7 +31,7 @@ const TITLES = {
   '/dashboard': tk('Dashboard'),
   '/scan': tk('Scan a bin'),
   '/admin': tk('Operations console'),
-  '/counter': tk('Voucher counter'),
+  '/counter': tk('Payment counter'),
   '/map': tk('Bin map'),
   '/about': tk('About'),
   '/leagues': tk('Campus leagues'),

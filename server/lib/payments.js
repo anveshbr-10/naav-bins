@@ -47,7 +47,7 @@ function planConvert(profile, amountInr, program) {
     return { points: amount * rate, amount };
 }
 
-// Can this student start a payment of amountInr at this counter? Returns { reject } or { points }.
+// Can this student start a payment of amountInr at this counter? Returns { reject } or { amount }.
 function planPaymentCreate(profile, vendor, amountInr, program) {
     if (!vendor) return reject(404, 'Vendor not found');
     if (vendor.active === false) return reject(400, 'This counter is closed right now.');
@@ -60,7 +60,7 @@ function planPaymentCreate(profile, vendor, amountInr, program) {
     if (have < amount) {
         return reject(400, 'Not enough in your campus wallet: you have ₹{have}. Redeem Eco-Points to add money.', { have });
     }
-    return { points: 0, amount };
+    return { amount };
 }
 
 // The status a student or counter should see (a Pending code past its expiry is Expired).
@@ -77,6 +77,25 @@ function planPaymentAccess(payment, vendor) {
         return reject(403, 'This payment is for {place}, not this counter.', { place: payment.vendor_name || 'another counter' });
     }
     return { ok: true };
+}
+
+// Refunds: admins only, once, within REFUND_WINDOW_DAYS of the payment, with a reason.
+const REFUND_WINDOW_DAYS = 7;
+function parseRefundReason(input) {
+    const s = typeof input === 'string' ? input.trim().replace(/\s+/g, ' ') : '';
+    if (s.length < 3 || s.length > 200) return reject(400, 'Please give a reason for the refund (3–200 characters).');
+    return { reason: s };
+}
+const REFUND_ERRORS = Object.freeze({
+    no_reason: reject(400, 'Please give a reason for the refund (3–200 characters).'),
+    not_found: reject(404, 'No payment with this code.'),
+    not_completed: reject(409, 'Only a completed payment can be refunded, once.'),
+    too_old: reject(409, 'Payments can only be refunded within {n} days.', { n: REFUND_WINDOW_DAYS }),
+});
+function refundError(result) {
+    if (result === 'ok') return null;
+    const r = REFUND_ERRORS[result];
+    return r ? r.reject : { code: 500, template: 'Server Error' };
 }
 
 // naav_confirm_payment result -> HTTP error, or null on success. (reject() so the texts are translated.)
@@ -96,5 +115,6 @@ function confirmError(result) {
 
 module.exports = {
     PAYMENT_TTL_MS, PAY_CODE_RE, QR_PREFIX,
+    REFUND_WINDOW_DAYS, parseRefundReason, refundError,
     generatePaymentCode, parsePaymentCode, walletView, planConvert, MIN_CONVERT_INR, planPaymentCreate, effectiveStatus, planPaymentAccess, confirmError,
 };

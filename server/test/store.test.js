@@ -3,13 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createStore } = require('../lib/store');
-const { planWasteDeposit, planRedemption, planRedemptionStatusChange, normalizeRules, normalizeCatalog } = require('../lib/rewards');
+const { planWasteDeposit, normalizeRules } = require('../lib/rewards');
 
 const RULES = normalizeRules([{ waste_type: 'Plastic', reward_inr: 25, points: 125, stream: 'dry', est_item_kg: 0.025 }]);
-const CATALOG = normalizeCatalog([
-    { item: 'Canteen Coupon ₹20', type: 'points', cost: 200, vendor_id: 'utsav-cafe' },
-    { item: 'Bank Transfer', type: 'money', cost: 100 },
-]);
 const NOW = Date.parse('2026-11-17T10:00:00.000Z');
 
 // In-memory stand-in for the Supabase client: tables + the SQL functions' semantics.
@@ -52,31 +48,17 @@ function fakeSupabase(db, hooks = {}) {
         calls.rpc.push({ name, args });
         if (hooks.beforeRpc) hooks.beforeRpc(db, calls.rpc.length, name);
         const p = (db.user_profiles || []).find(u => u.id === args.p_user);
-        const cas = p && p.walletBalance === args.p_expected_wallet && p.ecoPoints === args.p_expected_points;
-        if (name === 'naav_apply_deposit') {
+        if (name === 'naav_apply_deposit_v2') {
+            const e = args.p_expected;
+            const cas = p && p.walletBalance === e.walletBalance && p.ecoPoints === e.ecoPoints
+                && (p.pending_points || 0) === e.pendingPoints && (p.cycle_items || 0) === e.cycleItems;
             if ((db.waste_logs || []).some(l => l.session_id && l.session_id === args.p_log.session_id)) return Promise.resolve({ data: 'duplicate_session', error: null });
             if (!cas) return Promise.resolve({ data: 'conflict', error: null });
             p.walletBalance += args.p_log.reward_inr;
-            p.ecoPoints += args.p_log.points;
+            p.ecoPoints += args.p_award.credit;
+            p.pending_points = args.p_award.pending_after;
+            p.cycle_items = args.p_award.cycle_after;
             (db.waste_logs = db.waste_logs || []).push({ user_id: args.p_user, created_at: new Date(NOW).toISOString(), ...args.p_log });
-            return Promise.resolve({ data: 'ok', error: null });
-        }
-        if (name === 'naav_apply_redemption') {
-            const r = args.p_redemption;
-            const field = r.type === 'money' ? 'walletBalance' : 'ecoPoints';
-            if (!cas || p[field] < r.cost) return Promise.resolve({ data: 'conflict', error: null });
-            p[field] -= r.cost;
-            (db.redemptions = db.redemptions || []).push({ user_id: args.p_user, ...r });
-            return Promise.resolve({ data: 'ok', error: null });
-        }
-        if (name === 'naav_set_redemption_status') {
-            const r = (db.redemptions || []).find(x => x.code === args.p_code && x.status === args.p_from);
-            if (!r) return Promise.resolve({ data: 'conflict', error: null });
-            r.status = args.p_to;
-            if (args.p_refund) {
-                const owner = db.user_profiles.find(u => u.id === r.user_id);
-                owner[r.type === 'money' ? 'walletBalance' : 'ecoPoints'] += r.cost;
-            }
             return Promise.resolve({ data: 'ok', error: null });
         }
         if (name === 'naav_claim_challenge') {
@@ -91,19 +73,27 @@ function fakeSupabase(db, hooks = {}) {
 }
 
 const profile = (o = {}) => ({ id: 'u1', email: 'u1@example.com', name: 'U1', walletBalance: 0, ecoPoints: 0, ...o });
-const deposit = (sessionId, bin = { id: 'b1', name: 'Bin', stream: 'station' }) => (user, recent) => planWasteDeposit(user, recent, {
-    rules: RULES, wasteType: 'Plastic', bin, sessionId, now: NOW, cooldownMs: 20000, dailyLimit: 30,
-});
+// Like the API: an accepted item carries a cashback award (here: all points at once).
+const deposit = (sessionId, bin = { id: 'b1', name: 'Bin', stream: 'station' }) => (user, recent) => {
+    const plan = planWasteDeposit(user, recent, {
+        rules: RULES, wasteType: 'Plastic', bin, sessionId, now: NOW, cooldownMs: 20000, dailyLimit: 30, pointsOnly: true,
+    });
+    if (plan.reject || !plan.log.accepted) return plan;
+    const award = { credit: plan.log.points, instant: plan.log.points, pending_after: 0, cycle_after: 0, released: 0, expired: 0 };
+    return { ...plan, award };
+};
 const opts = { now: () => NOW };
 
-test('applyDeposit credits the reward and stores the log in one call', async () => {
+test('applyDeposit credits the points and stores the log in one call', async () => {
     const db = { user_profiles: [profile()], waste_logs: [] };
     const fake = fakeSupabase(db);
     const out = await createStore(fake.client, opts).applyDeposit('u1', deposit('s1'));
     assert.equal(out.outcome, 'ok');
-    assert.equal(db.user_profiles[0].walletBalance, 25);
+    assert.equal(db.user_profiles[0].ecoPoints, 125);
+    assert.equal(db.user_profiles[0].walletBalance, 0, 'points only: no ₹ from deposits');
     assert.equal(db.waste_logs.length, 1);
-    assert.equal(fake.calls.rpc[0].args.p_expected_wallet, 0);
+    assert.equal(fake.calls.rpc[0].name, 'naav_apply_deposit_v2');
+    assert.deepEqual(fake.calls.rpc[0].args.p_expected, { walletBalance: 0, ecoPoints: 0, pendingPoints: 0, cycleItems: 0 });
 });
 
 test('a concurrent deposit forces a re-read, and the per-bin cooldown then applies (no double reward)', async () => {
@@ -112,7 +102,6 @@ test('a concurrent deposit forces a re-read, and the per-bin cooldown then appli
     const fake = fakeSupabase(db, {
         beforeRpc: (d, n) => {
             if (n !== 1) return;
-            d.user_profiles[0].walletBalance = 25;
             d.user_profiles[0].ecoPoints = 125;
             d.waste_logs.push({ user_id: 'u1', bin_id: 'b1', accepted: true, created_at: new Date(NOW).toISOString(), session_id: 'other' });
         },
@@ -120,7 +109,7 @@ test('a concurrent deposit forces a re-read, and the per-bin cooldown then appli
     const out = await createStore(fake.client, opts).applyDeposit('u1', deposit('s1'));
     assert.equal(out.outcome, 'rejected');
     assert.equal(out.code, 429);
-    assert.equal(db.user_profiles[0].walletBalance, 25, 'only the other deposit was credited');
+    assert.equal(db.user_profiles[0].ecoPoints, 125, 'only the other deposit was credited');
 });
 
 test('a reused scan session is rejected by the database', async () => {
@@ -140,42 +129,6 @@ test('a wrong-stream item is inserted directly with no balance change', async ()
     assert.equal(fake.calls.rpc.length, 0);
     assert.equal(db.waste_logs[0].accepted, false);
     assert.equal(db.user_profiles[0].walletBalance, 7);
-});
-
-test('double-spend: two redemptions racing for the same balance cannot both succeed', async () => {
-    const db = { user_profiles: [profile({ walletBalance: 100 })], redemptions: [] };
-    const fake = fakeSupabase(db, {
-        beforeRpc: (d, n) => { if (n === 1) { d.user_profiles[0].walletBalance = 0; d.redemptions.push({ code: 'other', type: 'money', cost: 100, status: 'Pending' }); } },
-    });
-    let n = 0;
-    const out = await createStore(fake.client, opts).applyRedemption('u1', u =>
-        planRedemption(u, { catalog: CATALOG, item: 'Bank Transfer', upiId: 'ab@ybl', code: `NB-AAAA-000${n++}` }));
-    assert.equal(out.outcome, 'rejected');
-    assert.equal(out.message, 'Insufficient Funds');
-    assert.equal(db.user_profiles[0].walletBalance, 0, 'never negative');
-    assert.equal(db.redemptions.length, 1);
-});
-
-test('applyRedemption gives up with "conflict" when balances keep changing', async () => {
-    const db = { user_profiles: [profile({ ecoPoints: 1000 })], redemptions: [] };
-    const fake = fakeSupabase(db, { beforeRpc: d => { d.user_profiles[0].ecoPoints += 1; } });
-    const out = await createStore(fake.client, opts).applyRedemption('u1', u =>
-        planRedemption(u, { catalog: CATALOG, item: 'Canteen Coupon ₹20', code: 'NB-AAAA-BBBB' }), { maxAttempts: 3 });
-    assert.deepEqual(out, { outcome: 'conflict' });
-    assert.equal(fake.calls.rpc.length, 3);
-});
-
-test('a redemption decision refunds once; a second decision is a conflict', async () => {
-    const db = { user_profiles: [profile()], redemptions: [{ code: 'NB-1111-2222', user_id: 'u1', type: 'money', cost: 100, status: 'Pending' }] };
-    const store = createStore(fakeSupabase(db).client, opts);
-    const plan = r => planRedemptionStatusChange(r, { status: 'Rejected' });
-    assert.equal((await store.changeRedemptionStatus('NB-1111-2222', plan, 'a@x')).outcome, 'ok');
-    assert.equal(db.user_profiles[0].walletBalance, 100);
-    const again = await store.changeRedemptionStatus('NB-1111-2222', plan, 'a@x');
-    assert.equal(again.outcome, 'rejected');
-    assert.equal(again.code, 409);
-    assert.equal(db.user_profiles[0].walletBalance, 100, 'refunded exactly once');
-    assert.equal((await store.changeRedemptionStatus('NB-0000-0000', plan, 'a@x')).outcome, 'not_found');
 });
 
 test('challenge bonus is credited once', async () => {
@@ -211,7 +164,6 @@ test('ensureProfile returns an existing profile or creates a missing one', async
 test('reward tables are read from the database and cached', async () => {
     const db = {
         reward_rules: [{ waste_type: 'Plastic', reward_inr: 1, points: 10, stream: 'dry', est_item_kg: 0.02 }],
-        reward_catalog: [{ item: 'Canteen Coupon ₹20', type: 'points', cost: 200 }],
     };
     let t = NOW;
     const store = createStore(fakeSupabase(db).client, { now: () => t });

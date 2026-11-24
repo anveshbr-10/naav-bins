@@ -1,11 +1,11 @@
-// Money logic: what a deposit, a redemption and an admin decision do. Tables come from the database
+// Reward logic: what a deposit earns and records. Tables come from the database
 // in production; here the same rows are passed in directly.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-    normalizeRules, normalizeCatalog, publicCatalog, computeImpact,
-    planWasteDeposit, planRedemption, planRedemptionStatusChange, ADMIN_STATUSES,
-    generateVoucherCode, isValidUpiId, render,
+    normalizeRules, publicCatalog, computeImpact,
+    planWasteDeposit,
+    generateVoucherCode, render,
 } = require('../lib/rewards');
 
 const RULE_ROWS = [
@@ -17,15 +17,7 @@ const RULE_ROWS = [
     { waste_type: 'Retired', reward_inr: 99, points: 99, stream: 'dry', active: false },
     { waste_type: 'Bad', reward_inr: 1, points: 1, stream: 'mixed' },
 ];
-const CATALOG_ROWS = [
-    { item: 'Canteen Coupon ₹20', type: 'points', cost: 200, description: '₹20 off', vendor: 'Main canteen counter', vendor_id: 'utsav-cafe', labels: { kn: { item: 'ಕೂಪನ್' } }, sort: 1 },
-    { item: 'Orphan Coupon', type: 'points', cost: 50, description: 'No counter', vendor: null, sort: 2 },
-    { item: 'Bank Transfer', type: 'money', cost: 100, description: 'Withdraw', vendor: null, sort: 9 },
-    { item: 'Hidden', type: 'points', cost: 10, active: false },
-    { item: 'Free', type: 'points', cost: 0 },
-];
 const RULES = normalizeRules(RULE_ROWS);
-const CATALOG = normalizeCatalog(CATALOG_ROWS);
 
 const NOW = Date.parse('2026-11-17T10:00:00.000Z');
 const HOUR = 60 * 60 * 1000;
@@ -38,17 +30,15 @@ const log = (msAgo, o = {}) => ({ created_at: new Date(NOW - msAgo).toISOString(
 
 test('tables: inactive or invalid rows are ignored; values are frozen', () => {
     assert.deepEqual(Object.keys(RULES), ['Plastic', 'Metal', 'Paper / Cardboard', 'Organic', 'Other Trash']);
-    assert.deepEqual(Object.keys(CATALOG), ['Canteen Coupon ₹20', 'Orphan Coupon', 'Bank Transfer']);
-    assert.ok(Object.isFrozen(RULES) && Object.isFrozen(RULES.Plastic) && Object.isFrozen(CATALOG));
+    assert.ok(Object.isFrozen(RULES) && Object.isFrozen(RULES.Plastic));
     assert.equal(RULES.Organic.stream, 'wet');
 });
 
-test('publicCatalog mirrors the database tables in sort order, with labels', () => {
-    const c = publicCatalog(RULES, CATALOG);
+test('publicCatalog mirrors the reward table in sort order', () => {
+    const c = publicCatalog(RULES);
     assert.deepEqual(c.rewards.find(r => r.wasteType === 'Metal'), { wasteType: 'Metal', reward: 30, points: 150, stream: 'dry' });
-    assert.equal(c.redeem[0].item, 'Canteen Coupon ₹20');
-    assert.equal(c.redeem[0].vendor, 'Main canteen counter');
-    assert.equal(c.redeem[0].labels.kn.item, 'ಕೂಪನ್');
+    assert.deepEqual(c.rewards.map(r => r.wasteType), ['Plastic', 'Metal', 'Paper / Cardboard', 'Organic', 'Other Trash']);
+    assert.deepEqual(Object.keys(c), ['rewards']);
 });
 
 // ---------------- deposits ----------------
@@ -143,55 +133,6 @@ test('deposit: missing or corrupt balances are treated as zero, never NaN', () =
     assert.deepEqual(plan.expected, { walletBalance: 0, ecoPoints: 0 });
 });
 
-// ---------------- redemptions ----------------
-
-test('redeem voucher: issues a campus-credit code to claim at the vendor', () => {
-    const plan = planRedemption(user({ walletBalance: 50, ecoPoints: 600 }), { catalog: CATALOG, item: 'Canteen Coupon ₹20', code: 'NB-AAAA-BBBB' });
-    assert.deepEqual(plan.redemption, {
-        code: 'NB-AAAA-BBBB', item: 'Canteen Coupon ₹20', type: 'points', cost: 200, status: 'Issued', upi_id: null, vendor: 'Main canteen counter', vendor_id: 'utsav-cafe',
-    });
-    assert.deepEqual(plan.expected, { walletBalance: 50, ecoPoints: 600 });
-    assert.equal(plan.result.labels.kn.item, 'ಕೂಪನ್');
-});
-
-test('redeem voucher: exact balance is enough, one point short is not', () => {
-    assert.equal(planRedemption(user({ ecoPoints: 200 }), { catalog: CATALOG, item: 'Canteen Coupon ₹20', code: 'c' }).reject, undefined);
-    const short = planRedemption(user({ ecoPoints: 199 }), { catalog: CATALOG, item: 'Canteen Coupon ₹20', code: 'c' });
-    assert.equal(short.reject.code, 400);
-    assert.equal(short.reject.message, 'Insufficient Points');
-});
-
-test('redeem withdrawal: needs a valid UPI ID and becomes a pending request', () => {
-    assert.equal(planRedemption(user({ walletBalance: 500 }), { catalog: CATALOG, item: 'Bank Transfer', code: 'c', upiId: 'nope' }).reject.code, 400);
-    const plan = planRedemption(user({ walletBalance: 150 }), { catalog: CATALOG, item: 'Bank Transfer', code: 'c', upiId: '  name@okaxis ' });
-    assert.equal(plan.redemption.status, 'Pending');
-    assert.equal(plan.redemption.upi_id, 'name@okaxis');
-    assert.equal(planRedemption(user({ walletBalance: 99 }), { catalog: CATALOG, item: 'Bank Transfer', code: 'c', upiId: 'ab@ybl' }).reject.message, 'Insufficient Funds');
-});
-
-test('redeem: unknown, inactive or inherited items are rejected', () => {
-    for (const item of ['Free iPhone', 'Hidden', 'Free', '__proto__', undefined]) {
-        assert.equal(planRedemption(user({ ecoPoints: 1e6 }), { catalog: CATALOG, item, code: 'c' }).reject.code, 400, String(item));
-    }
-});
-
-// ---------------- admin / counter status changes ----------------
-
-test('status: allowed transitions and refunds', () => {
-    assert.deepEqual(planRedemptionStatusChange({ type: 'money', status: 'Pending' }, { status: 'Paid' }), { from: 'Pending', to: 'Paid', refund: false });
-    assert.deepEqual(planRedemptionStatusChange({ type: 'money', status: 'Pending' }, { status: 'Rejected' }), { from: 'Pending', to: 'Rejected', refund: true });
-    assert.deepEqual(planRedemptionStatusChange({ type: 'points', status: 'Issued' }, { status: 'Claimed' }), { from: 'Issued', to: 'Claimed', refund: false });
-    assert.deepEqual(planRedemptionStatusChange({ type: 'points', status: 'Issued' }, { status: 'Cancelled' }), { from: 'Issued', to: 'Cancelled', refund: true });
-});
-
-test('status: decided once, and statuses must match the type', () => {
-    for (const [type, from, to] of [['money', 'Rejected', 'Rejected'], ['money', 'Paid', 'Rejected'], ['points', 'Claimed', 'Cancelled'], ['money', 'Pending', 'Claimed'], ['points', 'Issued', 'Paid']]) {
-        assert.equal(planRedemptionStatusChange({ type, status: from }, { status: to }).reject.code, 409, `${type} ${from} -> ${to}`);
-    }
-    assert.equal(planRedemptionStatusChange(null, { status: 'Paid' }).reject.code, 404);
-    assert.deepEqual([...ADMIN_STATUSES].sort(), ['Cancelled', 'Claimed', 'Paid', 'Rejected']);
-});
-
 // ---------------- impact ----------------
 
 test('computeImpact: measured weight wins over the estimate; wrong-stream items do not count', () => {
@@ -222,28 +163,4 @@ test('render fills placeholders and leaves unknown ones', () => {
 test('generateVoucherCode: NB-XXXX-XXXX from an unambiguous alphabet', () => {
     for (let i = 0; i < 200; i++) assert.match(generateVoucherCode(), /^NB-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
     assert.equal(generateVoucherCode(() => Buffer.alloc(8, 0)), 'NB-AAAA-AAAA');
-});
-
-test('isValidUpiId', () => {
-    for (const ok of ['name@okaxis', 'first.last-1@ybl', ' padded@paytm ']) assert.equal(isValidUpiId(ok), true, ok);
-    for (const bad of ['', 'noat', '@bank', 'a@', 'a@1bank', 'a b@bank', null, 42]) assert.equal(isValidUpiId(bad), false, String(bad));
-});
-
-// ---------------- vendors (Phase 1) ----------------
-
-test('redeem voucher: an item with no counter cannot be issued; withdrawals carry no vendor', () => {
-    const orphan = planRedemption(user({ ecoPoints: 1000 }), { catalog: CATALOG, item: 'Orphan Coupon', code: 'c' });
-    assert.equal(orphan.reject.code, 400);
-    const upi = planRedemption(user({ walletBalance: 500 }), { catalog: CATALOG, item: 'Bank Transfer', code: 'c', upiId: 'ab@ybl' });
-    assert.equal(upi.redemption.vendor_id, null);
-    assert.equal(publicCatalog(RULES, CATALOG).redeem[0].vendorId, 'utsav-cafe');
-});
-
-test('status: counter staff can only claim vouchers for their own counter', () => {
-    const v = { type: 'points', status: 'Issued', vendor_id: 'utsav-cafe', vendor: 'Utsav Cafe Canteen' };
-    assert.equal(planRedemptionStatusChange(v, { status: 'Claimed', vendorId: 'utsav-cafe' }).to, 'Claimed');
-    const other = planRedemptionStatusChange(v, { status: 'Claimed', vendorId: 'mtr-stall' });
-    assert.equal(other.reject.code, 403);
-    assert.equal(other.reject.params.place, 'Utsav Cafe Canteen');
-    assert.equal(planRedemptionStatusChange(v, { status: 'Claimed' }).to, 'Claimed', 'admins act anywhere');
 });

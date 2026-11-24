@@ -21,13 +21,13 @@ module.exports = function publicRoutes(ctx) {
         return fail(res, 400, 'Please enter a valid email address.');
     });
 
-    // REWARD TABLE + CATALOGUE: read from the database (single source of truth).
+    // REWARD TABLE + PROGRAMME: read from the database (single source of truth).
     app.get('/api/rewards/catalog', async (req, res) => {
         try {
-            const [{ rules, catalog }, program] = await Promise.all([store.loadRewardTables(), store.loadProgram()]);
-            const view = publicCatalog(rules, catalog);
+            const [{ rules }, program] = await Promise.all([store.loadRewardTables(), store.loadProgram()]);
+            const view = publicCatalog(rules);
             // Campus-wallet model: items earn points only.
-            if (program.pointsOnly) view.rewards = view.rewards.map(r => ({ ...r, reward: 0 }));
+            view.rewards = view.rewards.map(r => ({ ...r, reward: 0 }));
             res.json({
                 status: 'ok', ...view,
                 program: {

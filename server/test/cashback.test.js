@@ -3,7 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-    normalizeProgram, pendingState, planCashback, parseProgramInput, LEGACY_PROGRAM, programView,
+    normalizeProgram, pendingState, planCashback, parseProgramInput, DEFAULT_PROGRAM, programView,
+    rateChangeCheck,
 } = require('../lib/cashback');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -14,14 +15,13 @@ const PROGRAM = normalizeProgram({
 });
 const profile = (o = {}) => ({ ecoPoints: 0, pending_points: 0, cycle_items: 0, last_earn_at: new Date(NOW - DAY).toISOString(), ...o });
 
-test('programme: milestones cleaned and sorted; missing table means legacy behaviour', () => {
+test('programme: milestones cleaned and sorted; a missing row means the defaults', () => {
     assert.deepEqual([...PROGRAM.milestones], [5, 10, 20]);
-    assert.equal(normalizeProgram(null), LEGACY_PROGRAM);
-    assert.equal(LEGACY_PROGRAM.active, false);
-    assert.equal(LEGACY_PROGRAM.pointsOnly, false);
+    assert.equal(normalizeProgram(null), DEFAULT_PROGRAM);
+    assert.equal(DEFAULT_PROGRAM.pointsOnly, true);
     assert.equal(normalizeProgram({ milestones: [] }).active, false, 'no milestones = no cashback');
     assert.equal(normalizeProgram({ multiplier_min: 2, multiplier_max: 1.5, milestones: [5] }).multiplierMax, 2);
-    assert.equal(programView(LEGACY_PROGRAM).installed, false);
+    assert.equal(programView(PROGRAM).pointsPerRupee, 10);
 });
 
 test('ordinary item: 60% now, 40% pending, one step closer to the milestone', () => {
@@ -111,4 +111,24 @@ test('programme input: validated and converted to columns', () => {
     assert.equal(parseProgramInput({ ...base, milestones: [] }).reject.code, 400);
     assert.equal(parseProgramInput({ ...base, multiplierMin: 1.5, multiplierMax: 1.2 }).reject.code, 400);
     assert.equal(parseProgramInput({ ...base, active: 'yes' }).reject.code, 400);
+});
+
+test('points-only is locked on: the row and admin input cannot switch it off', () => {
+    assert.equal(normalizeProgram({ ...ROW_OFF() }).pointsOnly, true);
+    const parsed = parseProgramInput({
+        active: true, pointsOnly: false, pointsPerRupee: 10, instantPct: 60, dailyBonusBudget: 100, expiryDays: 30,
+        milestones: [5], multiplierMin: 1, multiplierMax: 1.2,
+    });
+    assert.equal(parsed.values.points_only, true);
+});
+function ROW_OFF() { return { active: true, points_only: false, milestones: [5] }; }
+
+test('rate change: needs explicit confirmation; other edits do not', () => {
+    const current = { pointsPerRupee: 10 };
+    assert.equal(rateChangeCheck(current, { points_per_rupee: 10 }, {}), null);
+    const r = rateChangeCheck(current, { points_per_rupee: 20 }, {});
+    assert.equal(r.reject.code, 409);
+    assert.deepEqual(r.reject.params, { from: 10, to: 20 });
+    assert.equal(rateChangeCheck(current, { points_per_rupee: 20 }, { confirmRateChange: 'yes' }).reject.code, 409);
+    assert.equal(rateChangeCheck(current, { points_per_rupee: 20 }, { confirmRateChange: true }), null);
 });

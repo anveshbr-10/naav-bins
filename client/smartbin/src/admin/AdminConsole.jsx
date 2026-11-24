@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck, RefreshCw, Gauge, Trash2, Percent, ShieldAlert, Landmark, Users, Leaf, Scale, Store,
-  LayoutDashboard, Boxes, Ticket, Coins,
+  ShieldCheck, RefreshCw, Gauge, Trash2, Percent, ShieldAlert, Landmark, Users, Leaf, Store,
+  LayoutDashboard, Boxes, Coins, Wallet,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AppShell from '../layout';
@@ -12,7 +12,6 @@ import { Stat, Loading, LoadError } from './ui';
 import OpsMap from './OpsMap';
 import BinsPanel from './BinsPanel';
 import FlagsPanel from './FlagsPanel';
-import RedemptionsPanel from './RedemptionsPanel';
 import UsersPanel from './UsersPanel';
 import RewardsPanel from './RewardsPanel';
 import VendorsPanel from './VendorsPanel';
@@ -22,7 +21,6 @@ const TABS = [
   { id: 'overview', label: tk('Overview'), icon: LayoutDashboard },
   { id: 'bins', label: tk('Bins'), icon: Boxes },
   { id: 'flags', label: tk('Fraud flags'), icon: ShieldAlert },
-  { id: 'redemptions', label: tk('Redemptions'), icon: Ticket },
   { id: 'users', label: tk('Users'), icon: Users },
   { id: 'vendors', label: tk('Vendors'), icon: Store },
   { id: 'payments', label: tk('Payments'), icon: Landmark },
@@ -72,7 +70,6 @@ export default function AdminConsole() {
                   className={`flex items-center gap-2 px-4 py-3 text-sm font-bold border-b-2 whitespace-nowrap transition ${tab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
                   <Icon size={16} aria-hidden="true" /> {t(label)}
                   {id === 'flags' && o?.openFlags > 0 && <span className="ml-1 px-1.5 rounded-full bg-red-600 text-white text-[11px]">{o.openFlags}</span>}
-                  {id === 'redemptions' && o?.pendingCount > 0 && <span className="ml-1 px-1.5 rounded-full bg-amber-500 text-white text-[11px]">{o.pendingCount}</span>}
                 </button>
               );
             })}
@@ -98,12 +95,12 @@ export default function AdminConsole() {
                   value={o ? formatCount(o.openFlags) : '…'} note={o ? t('{n} high severity · {b} blocked', { n: o.highFlags, b: o.blocked }) : ''} />
                 <Stat icon={Users} tint="bg-blue-50 text-blue-600" label={t('Registered users')}
                   value={o ? formatCount(o.users) : '…'} note={o ? t('{a} admin · {v} vendor', { a: o.admins, v: o.vendors }) : ''} />
-                <Stat icon={Landmark} tint="bg-indigo-50 text-indigo-600" label={t('Paid out')}
-                  value={o ? formatInr(o.paidOut) : '…'} note={o ? t('{amount} pending ({n})', { amount: formatInr(o.pendingAmount), n: o.pendingCount }) : ''} />
+                <Stat icon={Landmark} tint="bg-indigo-50 text-indigo-600" label={t('Spent at counters')}
+                  value={o ? formatInr(o.spentInr) : '…'} note={o ? t('{n} payments all time', { n: formatCount(o.paymentsCount) }) : ''} />
                 <Stat icon={Leaf} tint="bg-emerald-50 text-emerald-600" label={t('CO₂ saved (est.)')}
                   value={o ? formatCo2(o.co2Kg) : '…'} note={o ? t('{n} items all time', { n: formatCount(o.items) }) : ''} />
-                <Stat icon={Scale} tint="bg-yellow-50 text-yellow-600" label={t('Rewards earned')}
-                  value={o ? formatInr(o.rewardsIssued) : '…'} note={o ? t('{amount} still in wallets · {n} unused vouchers', { amount: formatInr(o.walletTotal), n: o.openVouchers }) : ''} />
+                <Stat icon={Wallet} tint="bg-yellow-50 text-yellow-600" label={t('In campus wallets')}
+                  value={o ? formatInr(o.walletTotal) : '…'} note={o ? t('{n} Eco-Points not yet redeemed', { n: formatCount(o.pointsTotal) }) : ''} />
               </div>
             )}
             {ops.status === 'loading' && !ops.data && <Loading />}
@@ -116,7 +113,6 @@ export default function AdminConsole() {
             : ops.status === 'error' ? <LoadError onRetry={ops.reload} /> : <Loading />
         )}
         {tab === 'flags' && <FlagsPanel onChanged={refresh} />}
-        {tab === 'redemptions' && <RedemptionsPanel onChanged={overview.reload} />}
         {tab === 'users' && <UsersPanel onChanged={overview.reload} />}
         {tab === 'vendors' && <VendorsPanel days={days} />}
         {tab === 'payments' && <PaymentsPanel />}

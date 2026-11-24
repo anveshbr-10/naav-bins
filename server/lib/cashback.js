@@ -23,8 +23,6 @@ const DEFAULT_PROGRAM = Object.freeze({
     expiryDays: 30,
 });
 
-// Used when the reward_program table does not exist yet (004 not run): the old behaviour.
-const LEGACY_PROGRAM = Object.freeze({ ...DEFAULT_PROGRAM, active: false, pointsOnly: false, legacy: true });
 
 function cleanMilestones(list) {
     const out = [...new Set((Array.isArray(list) ? list : []).map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 1000))];
@@ -33,14 +31,14 @@ function cleanMilestones(list) {
 
 // reward_program row -> frozen programme (falls back to defaults field by field).
 function normalizeProgram(row) {
-    if (!row) return LEGACY_PROGRAM;
+    if (!row) return DEFAULT_PROGRAM;
     const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
     const milestones = cleanMilestones(row.milestones);
     const min = Math.max(1, num(row.multiplier_min, DEFAULT_PROGRAM.multiplierMin));
     const max = Math.max(min, Math.min(3, num(row.multiplier_max, DEFAULT_PROGRAM.multiplierMax)));
     return Object.freeze({
         active: row.active !== false && milestones.length > 0,
-        pointsOnly: row.points_only !== false,
+        pointsOnly: true, // the campus wallet is points-only by design (₹ only from redeeming)
         pointsPerRupee: Math.max(1, Math.round(num(row.points_per_rupee, DEFAULT_PROGRAM.pointsPerRupee))),
         instantPct: Math.min(100, Math.max(0, Math.round(num(row.instant_pct, DEFAULT_PROGRAM.instantPct)))),
         milestones: Object.freeze(milestones),
@@ -123,10 +121,9 @@ function parseProgramInput(body) {
     const b = body && typeof body === 'object' ? body : {};
     const int = (v, lo, hi) => { const n = Number(v); return Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
     const values = {};
-    for (const [k, col] of [['active', 'active'], ['pointsOnly', 'points_only']]) {
-        if (typeof b[k] !== 'boolean') return reject(400, 'Invalid request');
-        values[col] = b[k];
-    }
+    if (typeof b.active !== 'boolean') return reject(400, 'Invalid request');
+    values.active = b.active;
+    values.points_only = true; // locked: deposits never add ₹ directly
     const checks = [
         ['pointsPerRupee', 'points_per_rupee', 1, 1000],
         ['instantPct', 'instant_pct', 0, 100],
@@ -153,12 +150,20 @@ function parseProgramInput(body) {
     return { values };
 }
 
+// Changing points-per-₹ changes what every student's unredeemed points are worth, so the admin
+// must confirm it explicitly. Returns { reject } or null.
+function rateChangeCheck(current, values, body) {
+    if (!current || current.pointsPerRupee === values.points_per_rupee) return null;
+    if (body && body.confirmRateChange === true) return null;
+    return reject(409, 'Changing the rate from {from} to {to} points per ₹1 changes the value of all unredeemed points. Confirm to continue.',
+        { from: current.pointsPerRupee, to: values.points_per_rupee });
+}
+
 function programView(program) {
-    const { legacy, ...rest } = program;
-    return { ...rest, installed: !legacy };
+    return { ...program };
 }
 
 module.exports = {
-    DEFAULT_PROGRAM, LEGACY_PROGRAM, DAY_MS,
-    normalizeProgram, pendingState, planCashback, parseProgramInput, programView, nextMilestone,
+    DEFAULT_PROGRAM, DAY_MS,
+    normalizeProgram, pendingState, planCashback, parseProgramInput, programView, rateChangeCheck, nextMilestone,
 };

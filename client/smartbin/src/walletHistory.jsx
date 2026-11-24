@@ -12,10 +12,6 @@ const KIND_LABEL = {
   convert: tk('Redeemed Eco-Points to wallet'),
   payment: tk('Paid at a campus counter'),
   payment_refund: tk('Payment refunded'),
-  voucher: tk('Campus voucher'),
-  voucher_refund: tk('Voucher refunded'),
-  withdrawal: tk('Withdrawn to UPI'),
-  withdrawal_refund: tk('UPI withdrawal refunded'),
   adjustment: tk('Adjustment by the campus team'),
 };
 

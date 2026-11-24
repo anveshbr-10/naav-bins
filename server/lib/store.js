@@ -1,12 +1,12 @@
 // Database access (Supabase, secret key). Every balance change goes through a transactional SQL
 // function (see supabase/002_operations.sql):
-//   naav_apply_deposit / naav_apply_redemption insert the log or redemption AND change the balance in
+//   naav_apply_deposit_v2 inserts the log AND changes the balances in
 //   one transaction, guarded by compare-and-swap on the balances that were read. If another request
 //   changed the balances in between, the function returns 'conflict' and we re-read and re-decide —
 //   so concurrent requests cannot both pass the cooldown / daily-limit checks or double-spend.
 
-const { normalizeRules, normalizeCatalog } = require('./rewards');
-const { normalizeProgram, LEGACY_PROGRAM } = require('./cashback');
+const { normalizeRules } = require('./rewards');
+const { normalizeProgram } = require('./cashback');
 
 const LOG_FIELDS = 'id, created_at, bin_id, bin_name, waste_type, stream, accepted, reject_reason, reward_inr, points, est_weight_kg, measured_weight_kg, session_id';
 const RULES_TTL_MS = 60 * 1000;
@@ -39,31 +39,22 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
     let rulesCache = null;
     async function loadRewardTables() {
         if (rulesCache && rulesCache.expires > now()) return rulesCache.value;
-        const [rules, catalog] = await Promise.all([
-            supabase.from('reward_rules').select('*').order('sort'),
-            supabase.from('reward_catalog').select('*, vendors(active)').order('sort'),
-        ]);
+        const rules = await supabase.from('reward_rules').select('*').order('sort');
         if (rules.error) throw rules.error;
-        if (catalog.error) throw catalog.error;
-        const value = {
-            rules: normalizeRules(rules.data),
-            catalog: normalizeCatalog(catalog.data),
-            ruleRows: rules.data,
-            catalogRows: catalog.data,
-        };
+        const value = { rules: normalizeRules(rules.data), ruleRows: rules.data };
         rulesCache = { value, expires: now() + RULES_TTL_MS };
         return value;
     }
     function invalidateRewardTables() { rulesCache = null; programCache = null; }
 
     // ---------- reward programme (campus wallet + cashback; 004_wallet_cashback.sql) ----------
-    // Before 004 is run the table is missing: fall back to the old behaviour (LEGACY_PROGRAM).
+    // Requires 004_wallet_cashback.sql.
     let programCache = null;
     async function loadProgram() {
         if (programCache && programCache.expires > now()) return programCache.value;
         const { data, error } = await supabase.from('reward_program').select('*').eq('id', 1).maybeSingle();
-        const value = error ? LEGACY_PROGRAM : normalizeProgram(data);
-        if (error && error.code !== '42P01' && error.code !== 'PGRST205') console.error('Reward programme error:', error.message || error);
+        if (error) throw error;
+        const value = normalizeProgram(data);
         programCache = { value, expires: now() + RULES_TTL_MS };
         return value;
     }
@@ -105,7 +96,7 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         return [...(mine.data || []), ...(here.data || [])].filter(r => !seen.has(r.id) && seen.add(r.id));
     }
 
-    // decide(profile, recentLogs) -> { reject } | { log, result, expected? }
+    // decide(profile, recentLogs) -> { reject } | { log, result, award }
     async function applyDeposit(userId, decide, { windowMs = 24 * 60 * 60 * 1000, maxAttempts = 4 } = {}) {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             const [profile, recent] = await Promise.all([getProfile(userId), logsSince(userId, now() - windowMs)]);
@@ -120,23 +111,16 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
                 return { outcome: 'ok', result: plan.result };
             }
 
-            // With a cashback award (004 installed) the v2 function also moves the pending bonus.
-            const { data, error } = plan.award
-                ? await supabase.rpc('naav_apply_deposit_v2', {
-                    p_user: userId,
-                    p_expected: {
-                        walletBalance: profile.walletBalance, ecoPoints: profile.ecoPoints,
-                        pendingPoints: profile.pending_points || 0, cycleItems: profile.cycle_items || 0,
-                    },
-                    p_log: plan.log,
-                    p_award: plan.award,
-                })
-                : await supabase.rpc('naav_apply_deposit', {
-                    p_user: userId,
-                    p_expected_wallet: profile.walletBalance,
-                    p_expected_points: profile.ecoPoints,
-                    p_log: plan.log,
-                });
+            // Credits the points and moves the pending bonus (cashback award) in one transaction.
+            const { data, error } = await supabase.rpc('naav_apply_deposit_v2', {
+                p_user: userId,
+                p_expected: {
+                    walletBalance: profile.walletBalance, ecoPoints: profile.ecoPoints,
+                    pendingPoints: profile.pending_points || 0, cycleItems: profile.cycle_items || 0,
+                },
+                p_log: plan.log,
+                p_award: plan.award,
+            });
             if (error) throw error;
             if (data === 'ok') return { outcome: 'ok', result: plan.result };
             if (data === 'invalid') return { outcome: 'rejected', code: 400, message: 'Invalid request', template: 'Invalid request' };
@@ -146,48 +130,6 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
             // 'conflict': balances changed underneath us — re-read and re-decide.
         }
         return { outcome: 'conflict' };
-    }
-
-    // decide(profile) -> { reject } | { redemption, result }
-    async function applyRedemption(userId, decide, { maxAttempts = 4 } = {}) {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            const profile = await getProfile(userId);
-            if (!profile) return { outcome: 'not_found' };
-            const plan = decide(profile);
-            if (plan.reject) return { outcome: 'rejected', ...plan.reject };
-
-            const { data, error } = await supabase.rpc('naav_apply_redemption', {
-                p_user: userId,
-                p_expected_wallet: profile.walletBalance,
-                p_expected_points: profile.ecoPoints,
-                p_redemption: plan.redemption,
-            });
-            if (error) throw error;
-            if (data === 'ok') return { outcome: 'ok', result: plan.result };
-            if (data === 'invalid') return { outcome: 'rejected', code: 400, message: 'Unknown reward item', template: 'Unknown reward item' };
-            // 'conflict' or 'duplicate_code' (decide makes a fresh code on the next attempt): retry.
-        }
-        return { outcome: 'conflict' };
-    }
-
-    async function getRedemption(code) {
-        const { data, error } = await supabase.from('redemptions').select('*').eq('code', code).maybeSingle();
-        if (error) throw error;
-        return data;
-    }
-
-    // plan(redemption) -> { reject } | { from, to, refund }
-    async function changeRedemptionStatus(code, plan, actor) {
-        const redemption = await getRedemption(code);
-        if (!redemption) return { outcome: 'not_found' };
-        const decision = plan(redemption);
-        if (decision.reject) return { outcome: 'rejected', ...decision.reject };
-        const { data, error } = await supabase.rpc('naav_set_redemption_status', {
-            p_code: code, p_from: decision.from, p_to: decision.to, p_refund: decision.refund, p_actor: actor,
-        });
-        if (error) throw error;
-        if (data !== 'ok') return { outcome: 'conflict' };
-        return { outcome: 'ok', result: { ...redemption, status: decision.to, processed_by: actor, processed_at: new Date(now()).toISOString() } };
     }
 
     async function claimChallenge(userId, challengeId, points) {
@@ -209,19 +151,6 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         const { data, error } = await supabase.from('vendors').select('*').eq('id', id).maybeSingle();
         if (error) throw error;
         return data;
-    }
-
-    // Vouchers this counter has claimed since sinceMs (for the daily limit and the counter's list).
-    async function vendorClaimsSince(vendorId, sinceMs, { countOnly = false } = {}) {
-        let q = supabase.from('redemptions')
-            .select(countOnly ? 'code' : 'code, item, cost, processed_at, processed_by, user_profiles(name)', countOnly ? { count: 'exact', head: true } : undefined)
-            .eq('type', 'points').eq('status', 'Claimed')
-            .gte('processed_at', new Date(sinceMs).toISOString());
-        if (vendorId) q = q.eq('vendor_id', vendorId);
-        if (!countOnly) q = q.order('processed_at', { ascending: false }).limit(200);
-        const { data, count, error } = await q;
-        if (error) throw error;
-        return countOnly ? (count || 0) : (data || []);
     }
 
     // ---------- fraud flags ----------
@@ -253,9 +182,8 @@ function createStore(supabase, { now = () => Date.now() } = {}) {
         getProfile, ensureProfile,
         loadRewardTables, invalidateRewardTables, loadProgram, bonusSpentSince,
         logsSince, previousHashes, applyDeposit,
-        applyRedemption, getRedemption, changeRedemptionStatus,
         claimChallenge, claimedChallengeIds,
-        getVendor, vendorClaimsSince,
+        getVendor,
         recordFlag,
     };
 }

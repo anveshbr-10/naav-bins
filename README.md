@@ -40,17 +40,17 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
                                           │ secret key
                                           ▼
                                    Supabase Postgres
-                                   user_profiles, bins, waste_logs, redemptions,
-                                   reward_rules, reward_catalog, campus_groups,
+                                   user_profiles, bins, waste_logs, vendor_payments,
+                                   reward_rules, reward_program, campus_groups,
                                    fraud_flags, bin_collections, challenge_claims
 ```
 
 - **One platform:** Supabase provides both authentication and the database.
-- **Every login has exactly one profile:** `user_profiles.id` references `auth.users.id`. A trigger creates the profile at sign-up, and deleting a user deletes their profile, logs and redemptions (`on delete cascade`).
+- **Every login has exactly one profile:** `user_profiles.id` references `auth.users.id`. A trigger creates the profile at sign-up, and deleting a user deletes their profile, logs and payments (`on delete cascade`).
 - **Roles live in one place:** `user_profiles.role` is `user`, `vendor` (counter staff) or `admin`. A `vendor` account also carries `vendor_id`, the one campus counter it works at (a database constraint makes the two go together). The API reads both fresh on every request.
 - **The browser cannot reach the data directly:** Row Level Security blocks every table. Only the API, which uses the secret key, reads and writes them.
-- **The reward table lives in the database:** `reward_rules` (reward, points, BBMP stream, weight and CO₂ factors per material) and `reward_catalog` (campus credits). The API reads them and the app fetches them from the API. Admins edit them in the console, with no deploy needed.
-- **Money moves atomically:** each deposit, redemption, admin decision and challenge bonus runs in one Postgres transaction (`naav_apply_deposit`, `naav_apply_redemption`, `naav_set_redemption_status`, `naav_claim_challenge`). The balance update is a compare-and-swap, so concurrent requests cannot double-spend or slip past the cooldown.
+- **The reward table lives in the database:** `reward_rules` (points, BBMP stream, weight and CO₂ factors per material) and `reward_program` (the campus wallet and cashback settings). The API reads them and the app fetches them from the API. Admins edit them in the console, with no deploy needed.
+- **Money moves atomically:** each deposit, conversion, payment, refund and challenge bonus runs in one Postgres transaction (`naav_apply_deposit_v2`, `naav_convert_points`, `naav_create_payment`, `naav_confirm_payment`, `naav_refund_payment`, `naav_claim_challenge`). The balance update is a compare-and-swap, so concurrent requests cannot double-spend or slip past the cooldown.
 
 ## How a deposit works
 
@@ -88,9 +88,9 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 - Per bin: fill level (sensor, manual or estimated from items since last emptied), items and weight (measured vs estimated), automatic contamination rate (wrong-stream share), audited contamination from collections, open flags, and a "mark emptied" form that records weight and contamination.
 - Bin settings (status, stream, capacity, zone, QR mode), bin-screen provisioning and key rotation.
 - Fraud flags with dismiss / confirm / confirm-and-block. Blocked users cannot earn.
-- Redemption queue (pay / reject / claim / cancel), users with impact and flags, CSV export, and giving counter staff access to one specific counter.
-- **Vendors** tab: add, edit or switch off campus counters, see each counter's staff, unused vouchers and settlement (vouchers claimed, points, ₹ owed to the vendor) with CSV export.
-- Reward table and campus-credit catalogue editor.
+- Users with impact, campus-wallet payments and flags, CSV export, and giving counter staff access to one specific counter.
+- **Vendors** tab: add, edit or switch off campus counters, set each counter's payment limits, see its staff and settlement (payments and ₹ owed to the vendor) with CSV export.
+- Reward table and campus wallet / cashback settings editor.
 - One-click fill marking per bin: **Partly full** (60%, stays open), **Full** (100%, closed to deposits and added to the route) and **Emptied** (resets to 0% and records the collection). See [Bin fill levels and status](#bin-fill-levels-and-status).
 
 **Sign-up email check**
@@ -103,18 +103,18 @@ Browser (React + Vite, hosted on Vercel)          Bin hardware (optional)
 
 **Campus counters (vendors)**
 
-Each counter on campus is a record in the `vendors` table. Four are created by default: **Utsav Cafe Canteen**, **MTR Snacks Stall**, **College Stationery** and **College Xerox & Print**. Every campus credit in the catalogue belongs to one counter, and so does every voucher issued for it.
+Each counter on campus is a record in the `vendors` table. Four are created by default: **Utsav Cafe Canteen**, **MTR Snacks Stall**, **College Stationery** and **College Xerox & Print**. Students pay at a counter from their campus wallet, and each payment belongs to exactly one counter.
 
 | Rule (enforced by the API and the database) | Effect |
 |---|---|
 | Staff belong to exactly one counter | `role = 'vendor'` requires `vendor_id`, and other roles cannot have one |
-| Staff only see their own counter's vouchers | A canteen code typed at the print centre is refused with "This voucher is for Utsav Cafe Canteen, not this counter." |
-| Each code works once | Status guard in `naav_set_redemption_status` |
-| Daily claim limit per counter | Default 300 vouchers per IST day, editable per counter; limits damage from a misused staff login |
-| Switching a counter off | Its staff are locked out at once, and its credits disappear from the students' catalogue |
+| Staff only see their own counter's payments | A canteen payment code typed at the print centre is refused with "This payment is for Utsav Cafe Canteen, not this counter." |
+| Each code works once | Row lock and status guard in `naav_confirm_payment` |
+| Payment limits per counter | Default ₹500 per payment and ₹20,000 per IST day, editable per counter; limits damage from a misused staff login |
+| Switching a counter off | Its staff are locked out at once, and students can no longer choose it to pay |
 | Admins | Can act at any counter |
 
-**Counter page:** `/counter` shows the counter's name and location, a large **Scan the student's QR** button (live camera, or **Scan from photo** where the live camera is blocked, e.g. on a non-HTTPS address), a typed-code lookup, and today's payments and vouchers against the daily limits.
+**Counter page:** `/counter` shows the counter's name and location, a large **Scan the student's QR** button (live camera, or **Scan from photo** where the live camera is blocked, e.g. on a non-HTTPS address), a typed-code lookup, and today's payments against the daily limit.
 
 ## Campus wallet
 
@@ -122,7 +122,7 @@ It works like coins in a UPI app:
 
 1. **Eco-Points (coins):** earned by recycling, shown large on the dashboard with their ₹ value.
 2. **Redeem to wallet:** the student converts any whole number of rupees' worth of points into ₹ in the campus wallet (`walletBalance`) at `points_per_rupee` points (default 10) = ₹1. `naav_convert_points` takes the points and adds the ₹ in one statement (`POST /api/wallet/convert`).
-3. **Spend:** the ₹ wallet pays only at campus counters (the `vendors` table). It cannot be withdrawn: `/api/redeem` refuses UPI withdrawals once the wallet is set up.
+3. **Spend:** the ₹ wallet pays only at campus counters (the `vendors` table). It cannot be withdrawn: there is no withdrawal.
 
 **Paying any amount** (no more fixed ₹20 or ₹50 vouchers, so no leftover value is lost):
 
@@ -137,13 +137,14 @@ It works like coins in a UPI app:
 | One use per code, and only at the named counter | `naav_confirm_payment` (row lock and status check) |
 | Codes expire after 3 minutes | Checked when the code is created and when it is confirmed |
 | Per-payment maximum (default ₹500) and per-counter daily limit (default ₹20,000) | `vendors.max_txn_inr` and `daily_limit_inr`, editable in the **Vendors** tab |
-| Refunds by admins only, once | `naav_refund_payment`, from the **Payments** tab |
+| Refunds by admins only, once, within 7 days, with a reason | `naav_refund_payment`, from the **Payments** tab (the reason and admin are stored on the payment) |
 | Every point change is recorded | A trigger on `user_profiles."ecoPoints"` writes to `points_ledger` (deposit, bonus, challenge, convert, adjustment) |
-| Every ₹ change is recorded | A trigger on `user_profiles."walletBalance"` writes to `wallet_ledger` (convert, payment, refund, withdrawal) |
+| Only one payment code is live | `naav_create_payment` cancels the open code and creates the new one in one transaction |
+| Every ₹ change is recorded | A trigger on `user_profiles."walletBalance"` writes to `wallet_ledger` (convert, payment, refund) |
 
-- **Fixed vouchers:** retired. Codes that were already issued can still be used at their counter until they are claimed.
-- **No withdrawals:** the ₹ wallet can only be spent on campus; UPI withdrawal is turned off (the API refuses it).
-- **Settlement:** the **Vendors** tab shows each counter's payments in ₹, plus any old vouchers, so the college knows what it owes each shop.
+- **No fixed vouchers:** exact-amount payments replaced them, and the voucher tables are removed.
+- **No withdrawals:** the ₹ wallet can only be spent on campus.
+- **Settlement:** the **Vendors** tab shows each counter's payments in ₹, so the college knows what it owes each shop.
 
 ## Delayed cashback
 
@@ -156,10 +157,11 @@ Engagement works like UPI cashback, except the student is always paid **in full*
 | Random multiplier on the released bonus | ×1.0 to ×1.3 |
 | Daily budget for the extra multiplier points (all students together) | 5,000 points |
 | Pending bonus expires after this many days without recycling | 30 |
-| Items earn points only (no ₹) | on |
+| Items earn points only (no ₹) | always on (locked; ₹ comes only from redeeming points) |
 
 **Example:** a plastic bottle is worth 125 points. 75 are paid now and 50 go to the pending bonus. At the 5th item, the whole pending bonus (say 250 points) is released. With a ×1.15 multiplier the student also gets 37 extra points. The dashboard always shows the pending amount, the items left until the next milestone, and the expiry date.
 
+- **Rate changes:** changing points per ₹1 changes what every student's unredeemed points are worth, so the console asks for confirmation (the API refuses it without `confirmRateChange: true`). Every programme change is kept in `reward_program_history` (who, when, old and new values) and the last 20 are shown under the settings.
 - **Honesty:** only the *extra* is random or limited by the budget. The promised points are always paid at the milestone, and if an admin switches cashback off, everything still pending is paid with the next item.
 - **Expiry:** the pending bonus expires after 30 days without a deposit (recorded in `bonus_releases`).
 - **Atomic:** `naav_apply_deposit_v2` writes the item, the instant points, the pending bonus and the cycle position in one compare-and-swap transaction.
@@ -179,36 +181,36 @@ naav-bins/
 │   │   ├── leaderboard.jsx     campus leagues
 │   │   ├── binMap.jsx          bin map with stream filters and fill levels
 │   │   ├── binDisplay.jsx      the bin's screen: rotating QR code
-│   │   ├── counter.jsx         counter page: scan or type payment codes (NP-) and vouchers (NB-), today's totals
+│   │   ├── counter.jsx         counter page: scan or type payment codes (NP-), today's totals
 │   │   ├── payModal.jsx        pay any amount at a counter: one-time QR, countdown, live confirmation
 │   │   ├── walletHistory.jsx   wallet ₹ and Eco-Points transactions (ledgers)
 │   │   ├── convertModal.jsx    redeem Eco-Points into ₹
 │   │   ├── layout.jsx          shared page frame: navbar, bottom bar, footer
 │   │   ├── nav.jsx, logout.js  in-app Back button; logout that clears the tab's history
-│   │   └── admin/              operations console (fleet map, bins, flags, redemptions, users, vendors, payments, rewards + cashback settings)
+│   │   └── admin/              operations console (fleet map, bins, flags, users, vendors, payments, rewards + cashback settings)
 │   │       └── fill.js         fill-level colour bands shared by the bins table and fleet map
 │   └── scripts/i18n-sync.mjs  extract strings, check and machine-translate translations
 └── server/                    Express API
     ├── index.js               configuration, auth middleware, rate limits
     ├── routes/                public, user, admin (+ counter), device
     ├── lib/
-    │   ├── rewards.js         deposit / redemption decisions (pure)
+    │   ├── rewards.js         deposit decisions and impact (pure)
     │   ├── binQr.js           signed and rotating QR codes, device keys
     │   ├── emailCheck.js      sign-up email check (format, typos, disposable, MX)
     │   ├── geo.js             geofence, route optimisation
     │   ├── imageHash.js       perceptual hash
     │   ├── leagues.js         streaks, badges, challenges, standings
     │   ├── operations.js      fill levels, contamination, collection plan
-    │   ├── vendors.js         counter access, voucher ownership, daily limits, settlement
+    │   ├── vendors.js         counter access, vendor input, settlement
     │   ├── payments.js        campus wallet: payment codes, amounts, expiry, counter ownership
     │   ├── cashback.js        delayed cashback: instant / pending split, milestones, multiplier, expiry
     │   └── store.js           database access and transactional balance changes
     ├── scripts/generate-bin-qr.js   printable QR sheet (static bins)
     ├── supabase/schema.sql          base schema (accounts)
     ├── supabase/002_operations.sql  tables, functions and data migration for everything above
-    ├── supabase/003_vendors.sql     campus counters (vendors), staff ↔ counter link, vouchers tied to a counter
+    ├── supabase/003_vendors.sql     campus counters (vendors), staff ↔ counter link
     ├── supabase/004_wallet_cashback.sql  campus wallet, payments, points ledger, reward programme, delayed cashback
-    └── test/                  unit tests
+    └── test/                  unit tests; test/db/ runs the SQL scripts in PGlite
 ```
 
 ## Setup
@@ -218,9 +220,9 @@ naav-bins/
 1. **Database:** in the SQL Editor run [`server/supabase/schema.sql`](server/supabase/schema.sql) (fresh installs only; ⚠️ it deletes all profiles and auth users), then run [`server/supabase/002_operations.sql`](server/supabase/002_operations.sql).
    **Existing deployments: run only `002_operations.sql`.** It is idempotent. It moves the JSON `logs` / `redemptions` from `user_profiles` into the new `waste_logs` / `redemptions` tables, then drops the JSON columns. Deploy the new API immediately after it, because the old API reads those columns.
 
-   Then run [`server/supabase/003_vendors.sql`](server/supabase/003_vendors.sql) (all installs, idempotent). It creates the campus counters, links catalogue items and existing vouchers to them, and records the counter on new redemptions. ⚠️ Old `vendor` accounts that are not linked to a counter are moved back to `user`: give them access again from **Users → (user) → Give counter access**. Deploy the new API right after it.
+   Then run [`server/supabase/003_vendors.sql`](server/supabase/003_vendors.sql) (all installs, idempotent). It creates the campus counters and links counter staff to them. ⚠️ Old `vendor` accounts that are not linked to a counter are moved back to `user`: give them access again from **Users → (user) → Give counter access**. Deploy the new API right after it.
 
-   Then run [`server/supabase/004_wallet_cashback.sql`](server/supabase/004_wallet_cashback.sql) (all installs, idempotent). It adds the campus wallet (payments, points ledger), the reward programme and delayed cashback. It also switches deposits to points only and retires fixed vouchers; issued codes stay valid. The API works before this script is run (old behaviour), and turns the new features on as soon as it finds the tables.
+   Then run [`server/supabase/004_wallet_cashback.sql`](server/supabase/004_wallet_cashback.sql) (all installs, idempotent). It adds the campus wallet (payments, points ledger), the reward programme and delayed cashback. It also locks deposits to points only and removes the old fixed vouchers and UPI withdrawals (the `reward_catalog` and `redemptions` tables and their functions). **The API requires this script:** run it before deploying, and re-run it after updating (it is idempotent).
 2. **Authentication → Sign In / Providers → Email:** enabled, with **Confirm email** on. Minimum password length 8.
 3. **Authentication → URL Configuration:** Site URL `https://naav-bins.vercel.app`; Redirect URLs `https://naav-bins.vercel.app/**` and `http://localhost:5173/**`.
 4. **Social providers (optional):** enable Google, Facebook and LinkedIn (OIDC) and register `https://<project-ref>.supabase.co/auth/v1/callback` with each provider.
@@ -228,7 +230,7 @@ naav-bins/
    1. Authentication → Emails → **SMTP Settings**: enable custom SMTP. A free option is Gmail (host `smtp.gmail.com`, port `465`, your Gmail address as username, a [Google app password](https://myaccount.google.com/apppasswords) as password); Brevo or Resend also have free tiers.
    2. Authentication → **Rate Limits**: raise *Rate limit for sending emails* (e.g. 30 per hour). This field is locked until custom SMTP is on.
    3. Authentication → Providers → Email: keep the minimum interval between emails to the same address at **60 seconds**. The app shows a matching 60 s countdown on its "Resend link" button.
-6. **Campus data:** edit `campus_groups` (departments, hostels), `reward_catalog` (credits and where they are claimed) and the bins' `stream`, `lat`, `lng` and `capacity_items` to match your campus.
+6. **Campus data:** edit `campus_groups` (departments, hostels), `vendors` (campus counters) and the bins' `stream`, `lat`, `lng` and `capacity_items` to match your campus.
 
 ### 2. Backend (`server/`)
 
@@ -320,7 +322,10 @@ Colours, labels and the Full-means-100% rule are computed when the data is read,
 ```bash
 cd server && npm test                    # rewards, QR signing (static + rotating), geofence, routing, photo hash,
                                          # leagues, fleet metrics, transactional balance writes, vendors,
-                                         # campus-wallet payments, delayed cashback
+                                         # campus-wallet payments, delayed cashback, and the wallet SQL
+                                         # (convert, create/confirm/refund payment, deposit, programme
+                                         # history) run against the real scripts in PGlite (Postgres in
+                                         # WASM: no database server needed)
 cd client/smartbin && npm run i18n:check # translations complete
 cd client/smartbin && npm test           # formatting + translation coverage
 cd client/smartbin && npm run lint && npm run build
@@ -342,7 +347,7 @@ Register normally, confirm the email, then in the Supabase SQL Editor:
 update public.user_profiles set role = 'admin' where email = 'you@example.com';
 ```
 
-Sign out and back in to open the operations console. To give canteen or store staff counter access, open **Users**, select the person, choose their counter and click **Give counter access**. Counter staff only see the voucher counter for that counter. Add or switch off counters in the **Vendors** tab.
+Sign out and back in to open the operations console. To give canteen or store staff counter access, open **Users**, select the person, choose their counter and click **Give counter access**. Counter staff only see the payment counter for that counter. Add or switch off counters in the **Vendors** tab.
 
 ## Bin QR codes (printed)
 
@@ -457,25 +462,22 @@ Past deposits and collections are kept (they store the bin's id and name), but t
 |---|---|---|
 | GET | `/api/me` | signed in: id, email, name, role, department, hostel |
 | POST | `/api/me/profile` | signed in: name, department, hostel |
-| GET | `/api/dashboard` | signed in: balances, campus wallet, pending bonus, recent logs, redemptions, impact, streak, badges, challenges, rank |
+| GET | `/api/dashboard` | signed in: balances, campus wallet, pending bonus, recent logs, impact, streak, badges, challenges, rank |
 | POST | `/api/challenges/claim` | signed in: weekly challenge bonus (once) |
 | POST | `/api/scan/start` | signed in: verify QR (signed / rotating) + geofence, start scan session |
 | POST | `/api/add-waste` | signed in: record an item (scan session + thumbnail) |
-| POST | `/api/redeem` | signed in: voucher redemption (UPI withdrawal is refused once the campus wallet is set up) (or a voucher, if any are still active) |
 | GET | `/api/wallet` | signed in: campus wallet, pending bonus, open counters, open payment code, ₹ and points history, recent payments |
 | POST | `/api/wallet/convert` | signed in: redeem Eco-Points into ₹ in the campus wallet (`{ amountInr }`) |
 | POST | `/api/pay/create`, GET `/api/pay/:code`, POST `/api/pay/:code/cancel` | signed in: start a payment (exact ₹ at one counter), poll its status, cancel it |
-| GET | `/api/counter/me` | counter staff (own counter, today's payments and voucher claims), admin |
+| GET | `/api/counter/me` | counter staff (own counter, today's payments), admin |
 | GET | `/api/counter/payment/:code`, POST `/api/counter/payment/:code/confirm` | counter staff (own counter's payments only), admin |
-| GET | `/api/counter/voucher/:code`, POST `/api/counter/voucher/:code/claim` | counter staff (own counter's vouchers only, daily limit), admin |
 | GET/POST | `/api/admin/vendors`, POST `/api/admin/vendors/:id` | admin: list with staff + settlement, create, update / switch off, payment limits |
-| GET | `/api/admin/payments`, POST `/api/admin/payments/:code/refund` | admin: campus-wallet payments, refund once |
-| GET/POST | `/api/admin/program` | admin: campus wallet + cashback settings |
+| GET | `/api/admin/payments`, POST `/api/admin/payments/:code/refund` | admin: campus-wallet payments; refund once within 7 days, body `{ reason }` |
+| GET/POST | `/api/admin/program` | admin: campus wallet + cashback settings and recent changes (a rate change needs `confirmRateChange: true`) |
 | GET | `/api/admin/overview`, `/api/admin/ops`, `/api/admin/ops/route` | admin |
 | GET/POST | `/api/admin/bins/:id`, `/:id/empty`, `/:id/collections`, `/:id/device`, `/:id/rotate-key` | admin |
 | GET/POST | `/api/admin/flags`, `/api/admin/flags/:id/resolve` | admin |
 | GET/POST | `/api/admin/users`, `/api/admin/users/:id`, `/:id/block`, `/:id/role` (`{ role: 'vendor', vendorId }` or `{ role: 'user' }`) | admin |
-| GET/POST | `/api/admin/redemptions`, `/api/admin/redemptions/status` | admin |
 | GET/POST | `/api/admin/rewards`, `/api/admin/rewards/rule`, `/api/admin/rewards/item` | admin |
 | GET | `/api/device/hello`, POST `/api/device/telemetry` | bin device key |
 | POST | `/api/auth/check-email` | public, rate-limited: can this address receive the confirmation link? |

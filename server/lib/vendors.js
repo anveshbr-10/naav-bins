@@ -1,8 +1,8 @@
 // Vendor (campus counter) rules. Pure functions: no I/O.
 //
 // A vendor is a counter on campus — canteen, snack stall, stationery shop, print centre. Counter
-// staff (role 'vendor') belong to exactly one vendor and may only look up and claim vouchers issued
-// for that vendor, up to the vendor's daily claim limit. Admins may act at any counter.
+// staff (role 'vendor') belong to exactly one vendor and may only look up and confirm campus-wallet
+// payments made at that vendor. Admins may act at any counter.
 
 const { reject } = require('./rewards');
 
@@ -26,26 +26,6 @@ function planCounterAccess(profile, vendor) {
     }
     if (vendor.active === false) return reject(403, 'Your counter is switched off. Please contact the campus team.');
     return { vendor };
-}
-
-// May this counter see / claim this voucher? Admins (vendor null) may act on any voucher.
-function planVoucherAccess(voucher, vendor) {
-    if (!voucher || voucher.type !== 'points') return reject(404, 'No voucher with this code.');
-    if (!vendor) return { ok: true };
-    if (voucher.vendor_id !== vendor.id) {
-        return reject(403, 'This voucher is for {place}, not this counter.', { place: voucher.vendor || 'another counter' });
-    }
-    return { ok: true };
-}
-
-// Daily claim limit for a counter. claimedToday counts this vendor's vouchers claimed since IST midnight.
-function planDailyLimit(vendor, claimedToday) {
-    if (!vendor) return { ok: true };
-    const limit = Number(vendor.daily_claim_limit) || 0;
-    if (limit > 0 && Number(claimedToday) >= limit) {
-        return reject(429, 'This counter has reached its daily limit of {n} vouchers. Please contact the campus team.', { n: limit });
-    }
-    return { ok: true };
 }
 
 // Validates admin input for creating (partial = false) or updating (partial = true) a vendor.
@@ -73,11 +53,6 @@ function parseVendorInput(body, { partial = false } = {}) {
         if (typeof b.location !== 'string' || b.location.trim().length > 120) return reject(400, 'Invalid request');
         values.location = b.location.trim();
     }
-    if (has('dailyClaimLimit')) {
-        const n = Number(b.dailyClaimLimit);
-        if (!Number.isInteger(n) || n < 1 || n > 10000) return reject(400, 'Daily limit must be a whole number from 1 to 10000.');
-        values.daily_claim_limit = n;
-    }
     for (const [k, col, max] of [['maxTxnInr', 'max_txn_inr', 100000], ['dailyLimitInr', 'daily_limit_inr', 10000000]]) {
         if (!has(k)) continue;
         const n = Number(b[k]);
@@ -103,38 +78,21 @@ function parseVendorInput(body, { partial = false } = {}) {
     return { values };
 }
 
-// Settlement: what each counter handed out, so the college can pay the vendors.
-//   vendors:     vendors rows
-//   redemptions: claimed points vouchers in the period ({ vendor_id, cost })
-//   pointsPerRupee: exchange rate (10 points = ₹1 by default)
-//   payments:    completed campus-wallet payments in the period ({ vendor_id, amount_inr })
-function summarizeSettlement(vendors, redemptions, pointsPerRupee = 10, payments = []) {
-    const rate = Number(pointsPerRupee) > 0 ? Number(pointsPerRupee) : 10;
-    const totals = new Map((vendors || []).map(v => [v.id, { claimed: 0, points: 0, payments: 0, paymentsInr: 0 }]));
-    for (const r of redemptions || []) {
-        const t = r && totals.get(r.vendor_id);
-        if (!t) continue;
-        t.claimed += 1;
-        t.points += Number(r.cost) || 0;
-    }
+// Settlement: what each counter took in campus-wallet payments, so the college can pay the vendors.
+//   vendors:  vendors rows
+//   payments: completed campus-wallet payments in the period ({ vendor_id, amount_inr })
+function summarizeSettlement(vendors, payments = []) {
+    const totals = new Map((vendors || []).map(v => [v.id, { payments: 0, paymentsInr: 0 }]));
     for (const p of payments || []) {
         const t = p && totals.get(p.vendor_id);
         if (!t) continue;
         t.payments += 1;
         t.paymentsInr += Number(p.amount_inr) || 0;
     }
-    return (vendors || []).map(v => {
-        const t = totals.get(v.id);
-        const voucherInr = Math.round((t.points / rate) * 100) / 100;
-        return {
-            vendorId: v.id, claimed: t.claimed, points: t.points, voucherInr,
-            payments: t.payments, paymentsInr: t.paymentsInr,
-            valueInr: Math.round((voucherInr + t.paymentsInr) * 100) / 100,
-        };
-    });
+    return (vendors || []).map(v => ({ vendorId: v.id, ...totals.get(v.id) }));
 }
 
 module.exports = {
     VENDOR_CATEGORIES, VENDOR_ID_RE,
-    istDayStart, planCounterAccess, planVoucherAccess, planDailyLimit, parseVendorInput, summarizeSettlement,
+    istDayStart, planCounterAccess, parseVendorInput, summarizeSettlement,
 };

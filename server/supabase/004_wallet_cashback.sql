@@ -11,8 +11,9 @@
 --     code / QR valid for 3 minutes; the counter confirms it and exactly that ₹ is deducted.
 --   * Every change to points is written to points_ledger and every change to the ₹ wallet to
 --     wallet_ledger, both by triggers.
---   * Fixed-value vouchers are retired from the catalogue. Codes already issued stay valid.
---   * The ₹ wallet stays withdrawable to UPI.
+--   * The ₹ wallet is spent only at campus counters: no withdrawals.
+--   * Fixed-value vouchers and UPI withdrawals are removed (section 8): the reward_catalog and
+--     redemptions tables and their functions are dropped.
 --
 -- Phase 3 · Delayed cashback
 --   * Part of each item's points is paid at once (instant_pct); the rest builds a visible pending
@@ -49,6 +50,36 @@ create table if not exists public.reward_program (
     constraint reward_program_multiplier_check check (multiplier_max >= multiplier_min)
 );
 insert into public.reward_program (id) values (1) on conflict (id) do nothing;
+-- The campus wallet is points-only by design (₹ comes only from redeeming points), so lock it on.
+update public.reward_program set points_only = true where not points_only;
+alter table public.reward_program add column if not exists updated_by text;
+
+-- Every change to the programme is kept (old and new row, who, when), so a change to the
+-- points-per-₹ rate (which changes what every student's unredeemed points are worth) is traceable.
+create table if not exists public.reward_program_history (
+    id          bigint generated always as identity primary key,
+    changed_at  timestamptz not null default now(),
+    changed_by  text,
+    old_row     jsonb not null,
+    new_row     jsonb not null,
+    rate_before integer not null,
+    rate_after  integer not null
+);
+create index if not exists reward_program_history_time_idx on public.reward_program_history (changed_at desc);
+
+create or replace function public.naav_program_history_trigger() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+    if to_jsonb(new) - 'updated_at' - 'updated_by' is distinct from to_jsonb(old) - 'updated_at' - 'updated_by' then
+        insert into public.reward_program_history (changed_by, old_row, new_row, rate_before, rate_after)
+        values (new.updated_by, to_jsonb(old), to_jsonb(new), old.points_per_rupee, new.points_per_rupee);
+    end if;
+    return new;
+end;
+$$;
+drop trigger if exists naav_program_history on public.reward_program;
+create trigger naav_program_history after update on public.reward_program
+    for each row execute function public.naav_program_history_trigger();
 
 -- -----------------------------------------------------------------------------
 -- 3. Per-student cashback state
@@ -221,113 +252,8 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 6. Existing balance functions, now naming their ledger reason
+-- 6. Weekly challenge bonus, naming its ledger reason
 -- -----------------------------------------------------------------------------
-create or replace function public.naav_apply_deposit(
-    p_user uuid, p_expected_wallet integer, p_expected_points integer, p_log jsonb
-) returns text
-language plpgsql security definer set search_path = '' as $$
-declare
-    v_reward integer := coalesce((p_log ->> 'reward_inr')::integer, 0);
-    v_points integer := coalesce((p_log ->> 'points')::integer, 0);
-begin
-    perform set_config('naav.kind', 'deposit', true);
-    begin
-        insert into public.waste_logs (user_id, bin_id, bin_name, waste_type, stream, accepted, reject_reason,
-                                       reward_inr, points, est_weight_kg, session_id, image_hash, gps_distance_m)
-        values (p_user, p_log ->> 'bin_id', p_log ->> 'bin_name', p_log ->> 'waste_type', p_log ->> 'stream',
-                coalesce((p_log ->> 'accepted')::boolean, true), p_log ->> 'reject_reason',
-                v_reward, v_points, coalesce((p_log ->> 'est_weight_kg')::numeric, 0),
-                p_log ->> 'session_id', p_log ->> 'image_hash', (p_log ->> 'gps_distance_m')::numeric);
-
-        update public.user_profiles
-           set "walletBalance" = "walletBalance" + v_reward,
-               "ecoPoints"     = "ecoPoints" + v_points
-         where id = p_user
-           and "walletBalance" = p_expected_wallet
-           and "ecoPoints" = p_expected_points;
-        if not found then
-            raise exception 'naav_conflict';
-        end if;
-    exception
-        when unique_violation then return 'duplicate_session';
-        when raise_exception then
-            if sqlerrm = 'naav_conflict' then return 'conflict'; end if;
-            raise;
-    end;
-    return 'ok';
-end;
-$$;
-
-create or replace function public.naav_apply_redemption(
-    p_user uuid, p_expected_wallet integer, p_expected_points integer, p_redemption jsonb
-) returns text
-language plpgsql security definer set search_path = '' as $$
-declare
-    v_type text := p_redemption ->> 'type';
-    v_cost integer := (p_redemption ->> 'cost')::integer;
-begin
-    if v_cost is null or v_cost <= 0 or v_type not in ('points', 'money') then
-        return 'invalid';
-    end if;
-    perform set_config('naav.kind', case when v_type = 'money' then 'withdrawal' else 'voucher' end, true);
-    perform set_config('naav.ref', coalesce(p_redemption ->> 'code', ''), true);
-    begin
-        insert into public.redemptions (code, user_id, item, type, cost, status, upi_id, vendor, vendor_id)
-        values (p_redemption ->> 'code', p_user, p_redemption ->> 'item', v_type, v_cost,
-                p_redemption ->> 'status', p_redemption ->> 'upi_id', p_redemption ->> 'vendor',
-                nullif(p_redemption ->> 'vendor_id', ''));
-
-        if v_type = 'money' then
-            update public.user_profiles set "walletBalance" = "walletBalance" - v_cost
-             where id = p_user and "walletBalance" = p_expected_wallet and "ecoPoints" = p_expected_points
-               and "walletBalance" >= v_cost;
-        else
-            update public.user_profiles set "ecoPoints" = "ecoPoints" - v_cost
-             where id = p_user and "walletBalance" = p_expected_wallet and "ecoPoints" = p_expected_points
-               and "ecoPoints" >= v_cost;
-        end if;
-        if not found then
-            raise exception 'naav_conflict';
-        end if;
-    exception
-        when unique_violation then return 'duplicate_code';
-        when foreign_key_violation then return 'invalid';
-        when raise_exception then
-            if sqlerrm = 'naav_conflict' then return 'conflict'; end if;
-            raise;
-    end;
-    return 'ok';
-end;
-$$;
-
-create or replace function public.naav_set_redemption_status(
-    p_code text, p_from text, p_to text, p_refund boolean, p_actor text
-) returns text
-language plpgsql security definer set search_path = '' as $$
-declare
-    r public.redemptions%rowtype;
-begin
-    update public.redemptions
-       set status = p_to, processed_at = now(), processed_by = p_actor
-     where code = p_code and status = p_from
-    returning * into r;
-    if not found then
-        return 'conflict';
-    end if;
-    if p_refund then
-        perform set_config('naav.kind', case when r.type = 'money' then 'withdrawal_refund' else 'voucher_refund' end, true);
-        perform set_config('naav.ref', p_code, true);
-        if r.type = 'money' then
-            update public.user_profiles set "walletBalance" = "walletBalance" + r.cost where id = r.user_id;
-        else
-            update public.user_profiles set "ecoPoints" = "ecoPoints" + r.cost where id = r.user_id;
-        end if;
-    end if;
-    return 'ok';
-end;
-$$;
-
 create or replace function public.naav_claim_challenge(
     p_user uuid, p_challenge text, p_points integer
 ) returns text
@@ -363,7 +289,7 @@ create table if not exists public.vendor_payments (
     user_id       uuid not null references public.user_profiles (id) on delete cascade,
     vendor_id     text not null references public.vendors (id) on delete restrict,
     amount_inr    integer not null check (amount_inr > 0),
-    points        integer not null default 0 check (points >= 0), -- unused since payments debit the ₹ wallet
+    points        integer not null default 0 check (points >= 0), -- legacy, always 0: payments debit the ₹ wallet (kept so re-runs never drop data)
     status        text not null default 'Pending'
                   check (status in ('Pending', 'Completed', 'Expired', 'Cancelled', 'Refunded')),
     expires_at    timestamptz not null,
@@ -372,14 +298,39 @@ create table if not exists public.vendor_payments (
     staff_id      uuid references public.user_profiles (id) on delete set null,
     staff_email   text,
     refunded_at   timestamptz,
-    refunded_by   text
+    refunded_by   text,
+    refund_reason text
 );
+alter table public.vendor_payments add column if not exists refund_reason text;
 -- Payments now debit the ₹ wallet, so points may be 0 (older installs had check points > 0).
+-- Older installs created the column without a default ("create table if not exists" never changes it).
+alter table public.vendor_payments alter column points set default 0;
 alter table public.vendor_payments drop constraint if exists vendor_payments_points_check;
 alter table public.vendor_payments add constraint vendor_payments_points_check check (points >= 0);
 create index if not exists vendor_payments_user_idx   on public.vendor_payments (user_id, created_at desc);
 create index if not exists vendor_payments_vendor_idx on public.vendor_payments (vendor_id, completed_at desc);
 create index if not exists vendor_payments_open_idx   on public.vendor_payments (status) where status = 'Pending';
+
+-- Start a payment: cancel the student's open code and create the new one in one transaction, so
+-- only one code is ever live. The per-student advisory lock serialises two quick requests.
+-- Returns 'ok' or 'duplicate' (code collision: the API retries with a new code).
+create or replace function public.naav_create_payment(
+    p_user uuid, p_code text, p_vendor text, p_amount integer, p_expires timestamptz
+) returns text
+language plpgsql security definer set search_path = '' as $$
+begin
+    if p_amount is null or p_amount <= 0 then return 'invalid'; end if;
+    perform pg_advisory_xact_lock(hashtext('naav_pay:' || p_user::text));
+    update public.vendor_payments set status = 'Cancelled' where user_id = p_user and status = 'Pending';
+    begin
+        insert into public.vendor_payments (code, user_id, vendor_id, amount_inr, points, expires_at)
+        values (p_code, p_user, p_vendor, p_amount, 0, p_expires);
+    exception when unique_violation then
+        return 'duplicate';
+    end;
+    return 'ok';
+end;
+$$;
 
 -- Confirm a payment at a counter: checks the counter, expiry, the counter's daily ₹ limit and the
 -- student's ₹ wallet, then deducts exactly that amount. Runs once (row lock + status).
@@ -421,16 +372,28 @@ begin
 end;
 $$;
 
--- Admin refund of a completed payment (₹ goes back to the wallet). Once only.
-create or replace function public.naav_refund_payment(p_code text, p_actor text) returns text
+-- Admin refund of a completed payment (₹ goes back to the wallet). Once only, within
+-- p_window_days of completion, and a reason (3–200 characters) is required and stored.
+-- Returns 'ok', 'no_reason', 'not_found', 'not_completed' or 'too_old'.
+drop function if exists public.naav_refund_payment(text, text);
+create or replace function public.naav_refund_payment(
+    p_code text, p_actor text, p_reason text, p_window_days integer default 7
+) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
-    r public.vendor_payments%rowtype;
+    r        public.vendor_payments%rowtype;
+    v_reason text := btrim(coalesce(p_reason, ''));
 begin
-    update public.vendor_payments set status = 'Refunded', refunded_at = now(), refunded_by = p_actor
-     where code = p_code and status = 'Completed'
-    returning * into r;
-    if not found then return 'conflict'; end if;
+    if char_length(v_reason) < 3 or char_length(v_reason) > 200 then return 'no_reason'; end if;
+    select * into r from public.vendor_payments where code = p_code for update;
+    if not found then return 'not_found'; end if;
+    if r.status <> 'Completed' then return 'not_completed'; end if;
+    if r.completed_at < now() - make_interval(days => greatest(coalesce(p_window_days, 7), 0)) then
+        return 'too_old';
+    end if;
+    update public.vendor_payments
+       set status = 'Refunded', refunded_at = now(), refunded_by = p_actor, refund_reason = v_reason
+     where id = r.id;
     perform set_config('naav.kind', 'payment_refund', true);
     perform set_config('naav.ref', r.code, true);
     update public.user_profiles set "walletBalance" = "walletBalance" + r.amount_inr where id = r.user_id;
@@ -439,10 +402,16 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 8. Retire fixed-value vouchers (exact-amount payments replace them).
---    Codes already issued remain valid at their counter. UPI withdrawal stays.
+-- 8. Remove fixed-value vouchers and UPI withdrawals. Exact-amount payments from the ₹ wallet
+--    replace vouchers, and the wallet is spent only on campus. Also drops the pre-wallet deposit
+--    function (the API uses naav_apply_deposit_v2) and the voucher claim limit on counters.
 -- -----------------------------------------------------------------------------
-update public.reward_catalog set active = false, updated_at = now() where type = 'points' and active;
+drop function if exists public.naav_apply_redemption(uuid, integer, integer, jsonb);
+drop function if exists public.naav_set_redemption_status(text, text, text, boolean, text);
+drop function if exists public.naav_apply_deposit(uuid, integer, integer, jsonb);
+drop table if exists public.redemptions;
+drop table if exists public.reward_catalog;
+alter table public.vendors drop column if exists daily_claim_limit;
 
 -- -----------------------------------------------------------------------------
 -- 9. Lock down: only the API (secret key) has access.
@@ -452,8 +421,9 @@ alter table public.points_ledger   enable row level security;
 alter table public.bonus_releases  enable row level security;
 alter table public.vendor_payments enable row level security;
 alter table public.wallet_ledger   enable row level security;
+alter table public.reward_program_history enable row level security;
 revoke all on public.reward_program, public.points_ledger, public.bonus_releases, public.vendor_payments,
-              public.wallet_ledger
+              public.wallet_ledger, public.reward_program_history
     from anon, authenticated;
 
 revoke execute on function public.naav_points_ledger_trigger()                              from public, anon, authenticated;
@@ -461,18 +431,15 @@ revoke execute on function public.naav_wallet_ledger_trigger()                  
 revoke execute on function public.naav_convert_points(uuid, integer, integer)               from public, anon, authenticated;
 grant execute on function public.naav_convert_points(uuid, integer, integer)                to service_role;
 revoke execute on function public.naav_apply_deposit_v2(uuid, jsonb, jsonb, jsonb)          from public, anon, authenticated;
-revoke execute on function public.naav_apply_deposit(uuid, integer, integer, jsonb)         from public, anon, authenticated;
-revoke execute on function public.naav_apply_redemption(uuid, integer, integer, jsonb)      from public, anon, authenticated;
-revoke execute on function public.naav_set_redemption_status(text, text, text, boolean, text) from public, anon, authenticated;
 revoke execute on function public.naav_claim_challenge(uuid, text, integer)                 from public, anon, authenticated;
 revoke execute on function public.naav_confirm_payment(text, text, uuid, text)              from public, anon, authenticated;
-revoke execute on function public.naav_refund_payment(text, text)                           from public, anon, authenticated;
+revoke execute on function public.naav_refund_payment(text, text, text, integer)          from public, anon, authenticated;
+revoke execute on function public.naav_program_history_trigger()                            from public, anon, authenticated;
+revoke execute on function public.naav_create_payment(uuid, text, text, integer, timestamptz) from public, anon, authenticated;
+grant execute on function public.naav_create_payment(uuid, text, text, integer, timestamptz)  to service_role;
 grant execute on function public.naav_apply_deposit_v2(uuid, jsonb, jsonb, jsonb)           to service_role;
-grant execute on function public.naav_apply_deposit(uuid, integer, integer, jsonb)          to service_role;
-grant execute on function public.naav_apply_redemption(uuid, integer, integer, jsonb)       to service_role;
-grant execute on function public.naav_set_redemption_status(text, text, text, boolean, text) to service_role;
 grant execute on function public.naav_claim_challenge(uuid, text, integer)                  to service_role;
 grant execute on function public.naav_confirm_payment(text, text, uuid, text)               to service_role;
-grant execute on function public.naav_refund_payment(text, text)                            to service_role;
+grant execute on function public.naav_refund_payment(text, text, text, integer)           to service_role;
 
 commit;
