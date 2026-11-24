@@ -213,6 +213,102 @@ naav-bins/
     └── test/                  unit tests; test/db/ runs the SQL scripts in PGlite
 ```
 
+## Run the full project from scratch
+
+The steps below set up everything on a **new Supabase project**, in order. To reset an existing project instead, follow the same steps but skip the `bins` table in step 2: the scripts keep your bins, but `schema.sql` deletes every user and profile.
+
+**You need:** Node.js 20, npm, and a free [Supabase](https://supabase.com) project.
+
+### 1. Get the code
+
+```bash
+git clone <this repository> naav-bins
+cd naav-bins
+(cd server && npm ci)
+(cd client/smartbin && npm ci)
+```
+
+### 2. Create the database
+
+In Supabase, open **SQL Editor** and run each step as its own query, **in this order**. Wait for each to finish before starting the next.
+
+1. **The `bins` table** (new projects only). `schema.sql` expects it to exist already:
+
+   ```sql
+   create table if not exists public.bins (
+       id      text primary key,
+       name    text not null,
+       lat     double precision,
+       lng     double precision,
+       status  text not null default 'Active'
+   );
+   ```
+
+2. [`server/supabase/schema.sql`](server/supabase/schema.sql): user profiles and the sign-up trigger. ⚠️ Deletes all existing users and profiles.
+3. [`server/supabase/002_operations.sql`](server/supabase/002_operations.sql): bins, reward table, waste logs, campus groups, fraud flags, challenges.
+4. [`server/supabase/003_vendors.sql`](server/supabase/003_vendors.sql): the four default campus counters and the staff ↔ counter link.
+5. [`server/supabase/004_wallet_cashback.sql`](server/supabase/004_wallet_cashback.sql): campus wallet, payments, ledgers, reward programme and cashback. **The API needs this script.**
+
+Scripts 002–004 are safe to run again. To check that the setup worked, this query should return 3 rows:
+
+```sql
+select table_name from information_schema.tables
+ where table_schema = 'public' and table_name in ('vendor_payments', 'reward_program', 'reward_program_history');
+```
+
+### 3. Configure authentication
+
+Follow [Setup → Supabase](#1-supabase) steps 2–5: email sign-in with confirmation, the site and redirect URLs (add `http://localhost:5173/**` for local use), optional social providers, and custom SMTP so sign-up emails are not rate-limited.
+
+### 4. Set the environment variables
+
+```bash
+cp server/.env.example server/.env
+cp client/smartbin/.env.example client/smartbin/.env.local
+```
+
+- **`server/.env`:** `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (Supabase → Project Settings → API Keys → Secret keys). Generate `JWT_SECRET` and `QR_SECRET` with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` (run it twice, one value each). Keep `CORS_ORIGINS` including `http://localhost:5173`.
+- **`client/smartbin/.env.local`:** `VITE_API_URL=http://localhost:5000`, plus `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (the **publishable** key, never the secret one).
+
+### 5. Start the API and the app
+
+In two terminals:
+
+```bash
+cd server && npm run dev             # API on http://localhost:5000
+cd client/smartbin && npm run dev    # app on http://localhost:5173
+```
+
+The API prints `Supabase connected` and `Naav Bins API running on port 5000` when it is ready.
+
+### 6. Create the first admin
+
+1. Open http://localhost:5173, register, and confirm your email.
+2. In the SQL Editor, make yourself an admin:
+
+   ```sql
+   update public.user_profiles set role = 'admin' where email = 'you@example.com';
+   ```
+
+3. Sign out and back in. The **Operations console** (`/admin`) is now available.
+
+### 7. Add your campus
+
+- **Bins:** add them with their location and stream (see [Managing bins](#managing-bins-add-update-move-remove)), then print their QR codes (see [Bin QR codes](#bin-qr-codes-printed)).
+- **Counters:** check or edit the four default counters in **Console → Vendors**, and set each counter's payment limits.
+- **Counter staff:** **Console → Users → (person) → Give counter access**, choosing their counter.
+- **Departments and hostels:** edit the `campus_groups` table for the leagues.
+- **Rewards:** points per material and the cashback settings are in **Console → Rewards**.
+
+### 8. Check that it works
+
+```bash
+cd server && npm test                # unit tests, and the SQL scripts run in PGlite
+cd client/smartbin && npm test
+```
+
+Then try the full flow: scan a bin and deposit an item, redeem Eco-Points into the wallet, pay at a counter, and confirm the payment from the counter page (`/counter`).
+
 ## Setup
 
 ### 1. Supabase
