@@ -41,8 +41,3 @@ export function streamOf(name) {
   return STREAMS[name] || STREAMS.station;
 }
 
-// Redemption statuses (stored in English; shown translated).
-export const STATUS_LABEL = {
-  Issued: tk('Issued'), Pending: tk('Pending'), Paid: tk('Paid'), Claimed: tk('Claimed'),
-  Rejected: tk('Rejected'), Cancelled: tk('Cancelled'), Completed: tk('Completed'),
-};

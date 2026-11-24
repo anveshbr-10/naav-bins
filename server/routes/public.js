@@ -21,11 +21,21 @@ module.exports = function publicRoutes(ctx) {
         return fail(res, 400, 'Please enter a valid email address.');
     });
 
-    // REWARD TABLE + CATALOGUE: read from the database (single source of truth).
+    // REWARD TABLE + PROGRAMME: read from the database (single source of truth).
     app.get('/api/rewards/catalog', async (req, res) => {
         try {
-            const { rules, catalog } = await store.loadRewardTables();
-            res.json({ status: 'ok', ...publicCatalog(rules, catalog) });
+            const [{ rules }, program] = await Promise.all([store.loadRewardTables(), store.loadProgram()]);
+            const view = publicCatalog(rules);
+            // Campus-wallet model: items earn points only.
+            view.rewards = view.rewards.map(r => ({ ...r, reward: 0 }));
+            res.json({
+                status: 'ok', ...view,
+                program: {
+                    pointsOnly: program.pointsOnly, pointsPerRupee: program.pointsPerRupee, cashback: program.active,
+                    instantPct: program.instantPct, milestones: program.milestones,
+                    multiplierMin: program.multiplierMin, multiplierMax: program.multiplierMax, expiryDays: program.expiryDays,
+                },
+            });
         } catch (err) {
             console.error('Catalog error:', err);
             return fail(res, 503, 'Rewards are unavailable right now. Please try again shortly.');

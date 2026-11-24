@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { Search, ArrowUpRight, Download, X, Ticket, Recycle, ShieldAlert, Ban, Store, Loader2, Scale } from 'lucide-react';
+import { Search, ArrowUpRight, Download, X, Recycle, ShieldAlert, Ban, Store, Loader2, Scale, IndianRupee } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
 import { useI18n, tk, localized } from '../i18n';
 import useDialog from '../useDialog';
 import { formatCo2, formatCount, formatDate, formatDateTime, formatInr, formatKg } from '../format';
-import { STATUS_LABEL, WASTE_BY_NAME } from '../waste';
+import { WASTE_BY_NAME } from '../waste';
 import { useAdminData, useAuthErrorHandler } from './useAdminApi';
 import { Panel, Loading, LoadError, Pill, buttonGhost, inputClass } from './ui';
-import { RedemptionActions } from './RedemptionsPanel';
 import { FLAG_INFO } from './flagInfo';
+
+const PAYMENT_STATUS = {
+  Pending: tk('Waiting'), Completed: tk('Paid'), Expired: tk('Expired'), Cancelled: tk('Cancelled'), Refunded: tk('Refunded'),
+};
 
 const ROLE_STYLE = {
   admin: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -119,21 +122,17 @@ function UserDrawer({ userId, vendors, onClose, onChanged }) {
             )}
 
             <div className="px-6 pb-6">
-              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2"><Ticket size={18} /> {t('Redemptions')}</h3>
-              {data.redemptions.length === 0 ? <p className="text-sm text-slate-400">{t('No redemptions.')}</p> : (
-                <ul className="space-y-3">
-                  {data.redemptions.map((r) => (
-                    <li key={r.code} className="border border-slate-100 rounded-xl p-3">
-                      <div className="flex justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-800">{r.type === 'money' ? t('Withdrawal {amount}', { amount: formatInr(r.cost) }) : `${r.item} · ${t('{n} pts', { n: r.cost })}`}</p>
-                          <p className="text-xs text-slate-500">{formatDateTime(r.created_at)}</p>
-                          <p className="text-xs font-mono text-slate-600">{r.code}{r.upi_id ? ` · ${r.upi_id}` : ''}</p>
-                          {r.processed_by && <p className="text-xs text-slate-400">{t('by {who} · {date}', { who: r.processed_by, date: formatDateTime(r.processed_at) })}</p>}
-                        </div>
-                        <Pill className="bg-slate-50 border-slate-200 text-slate-600 h-fit">{t(STATUS_LABEL[r.status] || r.status)}</Pill>
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2"><IndianRupee size={18} /> {t('Campus wallet payments')}</h3>
+              {data.payments.length === 0 ? <p className="text-sm text-slate-400">{t('No payments yet.')}</p> : (
+                <ul className="divide-y divide-slate-100 border border-slate-100 rounded-xl">
+                  {data.payments.slice(0, 30).map((p) => (
+                    <li key={p.code} className="p-3 flex justify-between gap-3 text-sm">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800">{formatInr(p.amount_inr)} · {p.vendorName || p.vendor_id}</p>
+                        <p className="text-xs text-slate-500">{formatDateTime(p.completed_at || p.created_at)} · <span className="font-mono">{p.code}</span></p>
+                        {p.refund_reason && <p className="text-xs text-slate-500">{t('Refunded: {reason}', { reason: p.refund_reason })}</p>}
                       </div>
-                      <div className="mt-2"><RedemptionActions redemption={r} onDone={() => { reload(); onChanged(); }} /></div>
+                      <Pill className="bg-slate-50 border-slate-200 text-slate-600 h-fit">{t(PAYMENT_STATUS[p.status] || p.status)}</Pill>
                     </li>
                   ))}
                 </ul>
@@ -154,7 +153,7 @@ function UserDrawer({ userId, vendors, onClose, onChanged }) {
                           {l.measured_weight_kg ? <> · <Scale size={11} className="inline" /> {formatKg(l.measured_weight_kg)}</> : null}
                         </p>
                       </div>
-                      <span className="font-bold text-green-600 flex-shrink-0">+{formatInr(l.reward_inr)}</span>
+                      <span className="font-bold text-green-600 flex-shrink-0">{l.accepted === false ? t('0 pts') : t('+{n} pts', { n: l.points })}</span>
                     </li>
                   ))}
                 </ul>
@@ -180,10 +179,10 @@ export default function UsersPanel({ onChanged }) {
   const filtered = users.filter((u) => String(u.name || '').toLowerCase().includes(term) || String(u.email || '').toLowerCase().includes(term));
 
   const exportCsv = () => {
-    const header = ['Name', 'Email', 'Role', 'Counter', 'Department', 'Hostel', 'Blocked', 'Joined', 'Wallet (INR)', 'Eco Points', 'Items Recycled', 'Weight (kg)', 'Est. CO2 (kg)', 'Rewards Earned (INR)', 'Pending Withdrawals (INR)', 'Open Flags'];
+    const header = ['Name', 'Email', 'Role', 'Counter', 'Department', 'Hostel', 'Blocked', 'Joined', 'Wallet (INR)', 'Eco Points', 'Items Recycled', 'Weight (kg)', 'Est. CO2 (kg)', 'Open Flags'];
     const rows = filtered.map((u) => [
       u.name, u.email, u.role, u.vendor_id || '', u.department, u.hostel, u.is_blocked ? 'yes' : 'no', u.createdAt ? new Date(u.createdAt).toISOString().slice(0, 10) : '',
-      u.walletBalance ?? 0, u.ecoPoints ?? 0, u.impact?.items ?? 0, u.impact?.wasteKg ?? 0, u.impact?.co2Kg ?? 0, u.rewardsEarned ?? 0, u.pendingWithdrawals ?? 0, u.openFlags ?? 0,
+      u.walletBalance ?? 0, u.ecoPoints ?? 0, u.impact?.items ?? 0, u.impact?.wasteKg ?? 0, u.impact?.co2Kg ?? 0, u.openFlags ?? 0,
     ]);
     const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));

@@ -1,8 +1,8 @@
-// Reward and redemption decisions. Pure functions: no I/O.
+// Reward decisions. Pure functions: no I/O.
 //
-// The reward table (per-material reward, points, BBMP stream, weight and CO₂ factors) and the
-// redeemable catalogue live in the database (reward_rules, reward_catalog). The API loads them and
-// passes them in here; the client only names what happened and never decides amounts or costs.
+// The reward table (per-material points, BBMP stream, weight and CO₂ factors) lives in the database
+// (reward_rules). The API loads it and passes it in here; the client only names what happened and
+// never decides amounts.
 //
 // Error messages are English templates with {placeholders}. The API sends the template and its
 // parameters along with the rendered text, so the web app can show them in Kannada or Hindi.
@@ -13,16 +13,11 @@ const STREAMS = Object.freeze(['dry', 'wet', 'reject']);
 const BIN_STREAMS = Object.freeze(['station', ...STREAMS]);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const UPI_RE = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,63}$/;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no 0/O/1/I
 
 function generateVoucherCode(randomBytes = require('crypto').randomBytes) {
     const chars = Array.from(randomBytes(8), b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
     return `NB-${chars.slice(0, 4)}-${chars.slice(4)}`;
-}
-
-function isValidUpiId(value) {
-    return typeof value === 'string' && UPI_RE.test(value.trim());
 }
 
 function toNumber(value) {
@@ -61,37 +56,11 @@ function normalizeRules(rows) {
     return Object.freeze(out);
 }
 
-// reward_catalog rows -> frozen { [item]: { type, cost, description, vendor, labels, sort } } (active only)
-function normalizeCatalog(rows) {
-    const out = {};
-    for (const r of Array.isArray(rows) ? rows : []) {
-        if (!r || r.active === false || typeof r.item !== 'string') continue;
-        if (r.type !== 'points' && r.type !== 'money') continue;
-        // A switched-off counter's credits are not offered (vendors(active) is joined by the store).
-        if (r.vendors && r.vendors.active === false) continue;
-        const cost = Math.round(toNumber(r.cost));
-        if (cost <= 0) continue;
-        out[r.item] = Object.freeze({
-            type: r.type,
-            cost,
-            description: String(r.description || ''),
-            vendor: r.vendor || null,
-            vendorId: r.vendor_id || null,
-            labels: r.labels && typeof r.labels === 'object' ? r.labels : {},
-            sort: toNumber(r.sort),
-        });
-    }
-    return Object.freeze(out);
-}
-
-function publicCatalog(rules, catalog) {
+function publicCatalog(rules) {
     const bySort = (a, b) => a[1].sort - b[1].sort;
     return {
         rewards: Object.entries(rules).sort(bySort).map(([wasteType, r]) => ({
             wasteType, reward: r.reward, points: r.points, stream: r.stream,
-        })),
-        redeem: Object.entries(catalog).sort(bySort).map(([item, e]) => ({
-            item, type: e.type, cost: e.cost, description: e.description, vendor: e.vendor, vendorId: e.vendorId, labels: e.labels,
         })),
     };
 }
@@ -130,8 +99,9 @@ function computeImpact(rows, rules) {
 // Returns { reject } or { log, result }.
 // A wrong-stream item (e.g. food waste at a dry-waste bin) is recorded with no reward, so the
 // operations console can show contamination; the user is told which bin to use.
+// pointsOnly: the campus-wallet model (Phase 2) — items earn Eco-Points only, no ₹.
 function planWasteDeposit(user, recentLogs, {
-    rules, wasteType, bin, sessionId, now, cooldownMs, dailyLimit, imageHash, duplicates, gpsDistance,
+    rules, wasteType, bin, sessionId, now, cooldownMs, dailyLimit, imageHash, duplicates, gpsDistance, pointsOnly = false,
 }) {
     const rule = lookup(rules, wasteType);
     if (!rule) return reject(400, 'Unknown waste type');
@@ -190,69 +160,15 @@ function planWasteDeposit(user, recentLogs, {
     }
 
     return {
-        log: { ...base, accepted: true, reject_reason: null, reward_inr: rule.reward, points: rule.points, session_id: sessionId || null },
-        result: { accepted: true, reward: rule.reward, points: rule.points, stream: rule.stream, binStream },
+        log: { ...base, accepted: true, reject_reason: null, reward_inr: pointsOnly ? 0 : rule.reward, points: rule.points, session_id: sessionId || null },
+        result: { accepted: true, reward: pointsOnly ? 0 : rule.reward, points: rule.points, stream: rule.stream, binStream },
         expected: { walletBalance: toNumber(user.walletBalance), ecoPoints: toNumber(user.ecoPoints) },
     };
 }
 
-// ---------- redemptions ----------
-
-// Points items issue a voucher code to show at a campus counter; money withdrawals become a pending
-// payout request. Returns { reject } or { redemption, result }.
-function planRedemption(user, { catalog, item, code, upiId }) {
-    const entry = lookup(catalog, item);
-    if (!entry) return reject(400, 'Unknown reward item');
-    // Campus credits are claimed at one named counter; an item without one cannot be issued.
-    if (entry.type === 'points' && !entry.vendorId) return reject(400, 'This reward is not available right now.');
-    if (entry.type === 'money' && !isValidUpiId(upiId)) return reject(400, 'Please enter a valid UPI ID (e.g. name@bank).');
-
-    const wallet = toNumber(user.walletBalance);
-    const points = toNumber(user.ecoPoints);
-    if (entry.type === 'money' && wallet < entry.cost) return reject(400, 'Insufficient Funds');
-    if (entry.type === 'points' && points < entry.cost) return reject(400, 'Insufficient Points');
-
-    const redemption = {
-        code,
-        item,
-        type: entry.type,
-        cost: entry.cost,
-        status: entry.type === 'money' ? 'Pending' : 'Issued',
-        upi_id: entry.type === 'money' ? upiId.trim() : null,
-        vendor: entry.vendor,
-        vendor_id: entry.type === 'points' ? entry.vendorId : null,
-    };
-    return {
-        redemption,
-        expected: { walletBalance: wallet, ecoPoints: points },
-        result: { ...redemption, labels: entry.labels },
-    };
-}
-
-// Admin / counter status changes. The boolean says whether the cost is refunded to the user.
-const STATUS_TRANSITIONS = Object.freeze({
-    money:  Object.freeze({ Pending: Object.freeze({ Paid: false, Rejected: true }) }),
-    points: Object.freeze({ Issued:  Object.freeze({ Claimed: false, Cancelled: true }) }),
-});
-const ADMIN_STATUSES = Object.freeze(['Paid', 'Rejected', 'Claimed', 'Cancelled']);
-
-// vendorId: set when counter staff act; they may only claim vouchers issued for their own counter.
-function planRedemptionStatusChange(redemption, { status, vendorId = null }) {
-    if (!redemption) return reject(404, 'Redemption not found');
-    if (vendorId && redemption.vendor_id !== vendorId) {
-        return reject(403, 'This voucher is for {place}, not this counter.', { place: redemption.vendor || 'another counter' });
-    }
-    const allowed = lookup(STATUS_TRANSITIONS, redemption.type) || {};
-    const from = lookup(allowed, redemption.status);
-    if (!from || !Object.prototype.hasOwnProperty.call(from, status)) {
-        return reject(409, 'A {from} redemption cannot be marked {to}.', { from: redemption.status || 'completed', to: status });
-    }
-    return { from: redemption.status, to: status, refund: from[status] };
-}
-
 module.exports = {
-    STREAMS, BIN_STREAMS, ADMIN_STATUSES, DAY_MS,
-    normalizeRules, normalizeCatalog, publicCatalog, computeImpact,
-    planWasteDeposit, planRedemption, planRedemptionStatusChange,
-    generateVoucherCode, isValidUpiId, render, reject,
+    STREAMS, BIN_STREAMS, DAY_MS,
+    normalizeRules, publicCatalog, computeImpact,
+    planWasteDeposit,
+    generateVoucherCode, render, reject,
 };

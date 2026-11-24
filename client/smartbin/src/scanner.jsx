@@ -339,12 +339,12 @@ export default function Scanner() {
     try {
       const res = await api.post('/api/add-waste', { wasteType: material.name, scanToken, imageThumb });
       const d = res.data;
-      setDetected({ ...material, accepted: d.accepted, stream: d.stream, binStream: d.binStream, reward: d.rewardAdded, points: d.pointsAdded });
+      setDetected({ ...material, accepted: d.accepted, stream: d.stream, binStream: d.binStream, reward: d.rewardAdded, points: d.pointsAdded, cashback: d.cashback || null });
       setIsProcessing(false);
       if (d.accepted) {
         localStorage.removeItem('current_bin_location');
         setStatus({ key: 'identified' });
-        redirectTimerRef.current = setTimeout(() => navigate('/dashboard'), 3500);
+        redirectTimerRef.current = setTimeout(() => navigate('/dashboard'), d.cashback ? 5500 : 3500);
       } else {
         setStatus({ key: tk('Wrong bin for this item') });
       }
@@ -528,10 +528,32 @@ export default function Scanner() {
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-2xl font-extrabold" style={{ color: detected.color }}>+₹{detected.reward}</p>
-                  <p className="text-slate-500 text-xs">{t('+{n} pts', { n: detected.points })}</p>
+                  {detected.reward > 0 ? (
+                    <>
+                      <p className="text-2xl font-extrabold" style={{ color: detected.color }}>+₹{detected.reward}</p>
+                      <p className="text-slate-500 text-xs">{t('+{n} pts', { n: detected.points })}</p>
+                    </>
+                  ) : (
+                    <p className="text-2xl font-extrabold" style={{ color: detected.color }}>{t('+{n} pts', { n: detected.points })}</p>
+                  )}
                 </div>
               </div>
+              {detected.cashback && (
+                <div className="mx-5 mb-3 rounded-xl bg-slate-800/70 px-3 py-2 text-xs text-slate-300 space-y-0.5">
+                  {detected.cashback.milestoneHit ? (
+                    <p className="font-bold text-amber-300">
+                      🎉 {t('Milestone {n}! Bonus of {points} pts unlocked', { n: detected.cashback.milestoneHit, points: detected.cashback.released + detected.cashback.extra })}
+                      {detected.cashback.extra > 0 ? ` (×${detected.cashback.multiplier})` : ''}
+                    </p>
+                  ) : (
+                    <p>{t('{now} pts now · {later} pts added to your bonus', { now: detected.cashback.instant, later: detected.cashback.deferred })}</p>
+                  )}
+                  {detected.cashback.itemsToNext ? (
+                    <p className="text-slate-400">{t('Bonus waiting: {points} pts · {n} more items to unlock', { points: detected.cashback.pending, n: detected.cashback.itemsToNext })}</p>
+                  ) : null}
+                  {detected.cashback.expired > 0 && <p className="text-slate-500">{t('{n} pts of an old bonus expired after inactivity.', { n: detected.cashback.expired })}</p>}
+                </div>
+              )}
               <div className="h-0.5 bg-slate-800 mx-5 mb-4 rounded-full overflow-hidden">
                 <div className="progress-bar h-full rounded-full" style={{ background: detected.color }} />
               </div>

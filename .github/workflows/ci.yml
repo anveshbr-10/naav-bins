@@ -27,7 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
-      - name: Unit tests (rewards, QR signing, geofence, photo hash, leagues, routing, balance writes)
+      - name: Unit + database tests (rewards, QR signing, geofence, photo hash, leagues, routing, wallet SQL in PGlite)
         run: npm test
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

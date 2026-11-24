@@ -1,15 +1,16 @@
-// Operations console (admins), vendor management, and the voucher counter (admins + counter staff).
+// Operations console (admins), vendor management, and the payment counter (admins + counter staff).
 
-const { computeImpact, planRedemptionStatusChange, ADMIN_STATUSES, BIN_STREAMS } = require('../lib/rewards');
+const { computeImpact, BIN_STREAMS } = require('../lib/rewards');
 const { summarizeFleet, planCollectionRoute } = require('../lib/operations');
 const { deriveDeviceKey } = require('../lib/binQr');
 const {
-    istDayStart, planCounterAccess, planVoucherAccess, planDailyLimit, parseVendorInput, summarizeSettlement, VENDOR_ID_RE,
+    istDayStart, planCounterAccess, parseVendorInput, summarizeSettlement, VENDOR_ID_RE,
 } = require('../lib/vendors');
+const { parsePaymentCode, effectiveStatus, planPaymentAccess, confirmError, parseRefundReason, refundError, REFUND_WINDOW_DAYS } = require('../lib/payments');
+const { parseProgramInput, programView, normalizeProgram, rateChangeCheck } = require('../lib/cashback');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BIN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const CODE_RE = /^(NB-[A-Z0-9]{4}-[A-Z0-9]{4}|LEGACY-[A-Z0-9]{8})$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const num = (v, { min = -Infinity, max = Infinity } = {}) => {
@@ -36,28 +37,26 @@ module.exports = function adminRoutes(ctx) {
 
     // ---------------- overview ----------------
     app.get('/api/admin/overview', ...admin, async (req, res) => {
-        const [profiles, material, redemptions, flags, tables] = await Promise.all([
+        const [profiles, material, payments, flags, tables] = await Promise.all([
             supabase.from('user_profiles').select('role, walletBalance, ecoPoints, is_blocked'),
             supabase.from('naav_user_material_stats').select('waste_type, items, weight_kg, measured_items, reward_inr'),
-            supabase.from('redemptions').select('type, cost, status'),
+            supabase.from('vendor_payments').select('amount_inr').eq('status', 'Completed').limit(100000),
             supabase.from('fraud_flags').select('severity').is('resolved_at', null),
             store.loadRewardTables(),
         ]);
-        for (const r of [profiles, material, redemptions, flags]) if (r.error) throw r.error;
+        for (const r of [profiles, material, payments, flags]) if (r.error) throw r.error;
         const impact = computeImpact(material.data, tables.rules);
-        const sum = (rows, pred) => rows.filter(pred).reduce((s, r) => s + (Number(r.cost) || 0), 0);
+        const total = (rows, key) => rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
         res.json({
             status: 'ok',
             users: profiles.data.filter(p => p.role === 'user').length,
             admins: profiles.data.filter(p => p.role === 'admin').length,
             vendors: profiles.data.filter(p => p.role === 'vendor').length,
             blocked: profiles.data.filter(p => p.is_blocked).length,
-            walletTotal: profiles.data.reduce((s, p) => s + (Number(p.walletBalance) || 0), 0),
-            rewardsIssued: material.data.reduce((s, r) => s + (Number(r.reward_inr) || 0), 0),
-            paidOut: sum(redemptions.data, r => r.type === 'money' && r.status === 'Paid'),
-            pendingAmount: sum(redemptions.data, r => r.type === 'money' && r.status === 'Pending'),
-            pendingCount: redemptions.data.filter(r => r.type === 'money' && r.status === 'Pending').length,
-            openVouchers: redemptions.data.filter(r => r.type === 'points' && r.status === 'Issued').length,
+            walletTotal: total(profiles.data, 'walletBalance'),
+            pointsTotal: total(profiles.data, 'ecoPoints'),
+            spentInr: total(payments.data, 'amount_inr'),
+            paymentsCount: payments.data.length,
             openFlags: flags.data.length,
             highFlags: flags.data.filter(f => f.severity === 'high').length,
             ...impact,
@@ -66,19 +65,17 @@ module.exports = function adminRoutes(ctx) {
 
     // ---------------- users ----------------
     app.get('/api/admin/users', ...admin, async (req, res) => {
-        const [users, material, open, flags, tables] = await Promise.all([
+        const [users, material, flags, tables] = await Promise.all([
             supabase.from('user_profiles')
                 .select('id, email, name, role, vendor_id, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt')
                 .order('createdAt', { ascending: true }),
             supabase.from('naav_user_material_stats').select('user_id, waste_type, items, weight_kg, measured_items, reward_inr'),
-            supabase.from('redemptions').select('user_id, cost').eq('type', 'money').eq('status', 'Pending'),
             supabase.from('fraud_flags').select('user_id').is('resolved_at', null),
             store.loadRewardTables(),
         ]);
-        for (const r of [users, material, open, flags]) if (r.error) throw r.error;
+        for (const r of [users, material, flags]) if (r.error) throw r.error;
         const group = (rows, key) => rows.reduce((m, r) => m.set(r[key], [...(m.get(r[key]) || []), r]), new Map());
         const byUser = group(material.data, 'user_id');
-        const pending = group(open.data, 'user_id');
         const flagCount = group(flags.data, 'user_id');
         res.json({
             status: 'ok',
@@ -87,8 +84,6 @@ module.exports = function adminRoutes(ctx) {
                 return {
                     ...u,
                     impact: computeImpact(rows, tables.rules),
-                    rewardsEarned: rows.reduce((s, r) => s + (Number(r.reward_inr) || 0), 0),
-                    pendingWithdrawals: (pending.get(u.id) || []).reduce((s, r) => s + (Number(r.cost) || 0), 0),
                     openFlags: (flagCount.get(u.id) || []).length,
                 };
             }),
@@ -98,15 +93,20 @@ module.exports = function adminRoutes(ctx) {
     app.get('/api/admin/users/:id', ...admin, async (req, res) => {
         const id = req.params.id;
         if (!UUID_RE.test(id)) return fail(res, 400, 'Invalid request');
-        const [user, logs, redemptions, flags] = await Promise.all([
+        const [user, logs, payments, flags] = await Promise.all([
             supabase.from('user_profiles').select('id, email, name, role, vendor_id, walletBalance, ecoPoints, department, hostel, is_blocked, createdAt').eq('id', id).maybeSingle(),
             supabase.from('waste_logs').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(100),
-            supabase.from('redemptions').select('*').eq('user_id', id).order('created_at', { ascending: false }),
+            supabase.from('vendor_payments').select('code, vendor_id, amount_inr, status, expires_at, created_at, completed_at, refunded_at, refund_reason, vendors(name)')
+                .eq('user_id', id).order('created_at', { ascending: false }).limit(100),
             supabase.from('fraud_flags').select('*').eq('user_id', id).order('created_at', { ascending: false }).limit(50),
         ]);
-        for (const r of [user, logs, redemptions, flags]) if (r.error) throw r.error;
+        for (const r of [user, logs, payments, flags]) if (r.error) throw r.error;
         if (!user.data) return fail(res, 404, 'User not found');
-        res.json({ status: 'ok', user: user.data, logs: logs.data, redemptions: redemptions.data, flags: flags.data });
+        const now = Date.now();
+        res.json({
+            status: 'ok', user: user.data, logs: logs.data, flags: flags.data,
+            payments: payments.data.map(({ vendors: v, ...p }) => ({ ...p, status: effectiveStatus(p, now), vendorName: v ? v.name : null })),
+        });
     });
 
     // Pause / resume a user's ability to earn (e.g. after confirmed fraud).
@@ -142,90 +142,81 @@ module.exports = function adminRoutes(ctx) {
         res.json({ status: 'ok', user: data });
     });
 
-    // ---------------- redemptions ----------------
-    app.get('/api/admin/redemptions', ...admin, async (req, res) => {
-        let q = supabase.from('redemptions').select('*, user_profiles(name, email)').order('created_at', { ascending: true }).limit(1000);
-        if (req.query.scope !== 'all') q = q.in('status', ['Pending', 'Issued']);
-        const { data, error } = await q;
-        if (error) throw error;
-        res.json({
-            status: 'ok',
-            redemptions: (data || []).map(({ user_profiles: u, ...r }) => ({ ...r, userName: u ? u.name : null, userEmail: u ? u.email : null })),
-        });
-    });
-
-    // Pending -> Paid / Rejected (withdrawals), Issued -> Claimed / Cancelled (vouchers).
-    // Rejected / Cancelled refund the user. Each decision applies once (status guard in SQL).
-    async function decide(req, res, code, status, vendorId = null) {
-        if (!CODE_RE.test(code) || !ADMIN_STATUSES.includes(status)) return fail(res, 400, 'Invalid request');
-        const outcome = await store.changeRedemptionStatus(code, r => planRedemptionStatusChange(r, { status, vendorId }), req.user.email);
-        if (outcome.outcome === 'not_found') return fail(res, 404, 'Redemption not found');
-        if (outcome.outcome === 'rejected') return fail(res, outcome.code, outcome.template || outcome.message, outcome.params);
-        if (outcome.outcome === 'conflict') return fail(res, 409, 'This redemption was already processed. Please refresh.');
-        caches.stats = null;
-        return res.json({ status: 'ok', redemption: outcome.result });
-    }
-
-    app.post('/api/admin/redemptions/status', ...adminWrite, (req, res) =>
-        decide(req, res, str(req.body && req.body.code), req.body && req.body.status));
-
-    // ---------------- voucher counter (canteen / store staff) ----------------
-    // Staff see and claim only vouchers issued for their own counter, up to its daily limit.
+    // ---------------- payment counter (canteen / store staff) ----------------
+    // Staff see and confirm only payments made at their own counter, up to its daily ₹ limit.
     const vendorView = v => (v ? {
-        id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels, dailyClaimLimit: v.daily_claim_limit,
+        id: v.id, name: v.name, category: v.category, location: v.location, labels: v.labels,
+        maxTxnInr: v.max_txn_inr, dailyLimitInr: v.daily_limit_inr,
     } : null);
 
     app.get('/api/counter/me', ...counter, async (req, res) => {
-        const claims = await store.vendorClaimsSince(req.vendor ? req.vendor.id : null, istDayStart(Date.now()));
+        const since = istDayStart(Date.now());
+        let pq = supabase.from('vendor_payments')
+            .select('code, amount_inr, completed_at, user_profiles!vendor_payments_user_id_fkey(name)')
+            .eq('status', 'Completed').gte('completed_at', new Date(since).toISOString())
+            .order('completed_at', { ascending: false }).limit(200);
+        if (req.vendor) pq = pq.eq('vendor_id', req.vendor.id);
+        const { data: pays, error: payError } = await pq;
+        if (payError) throw payError;
+        const payments = (pays || []).map(({ user_profiles: u, ...p }) => ({ ...p, userName: u ? u.name : null }));
         res.json({
             status: 'ok',
             vendor: vendorView(req.vendor),
-            today: claims.map(({ user_profiles: u, ...c }) => ({ ...c, userName: u ? u.name : null })),
+            payments,
+            paymentsInr: payments.reduce((s, p) => s + (Number(p.amount_inr) || 0), 0),
         });
     });
 
-    app.get('/api/counter/voucher/:code', ...counter, async (req, res) => {
-        const code = str(req.params.code).toUpperCase();
-        if (!CODE_RE.test(code)) return fail(res, 400, 'Enter a code like NB-ABCD-2345.');
-        const { data, error } = await supabase.from('redemptions')
-            .select('code, item, type, cost, status, vendor, vendor_id, created_at, processed_at, processed_by, user_profiles(name)')
+    // ---------------- campus-wallet payments at the counter ----------------
+    async function loadPayment(code) {
+        const { data, error } = await supabase.from('vendor_payments')
+            .select('code, vendor_id, amount_inr, status, expires_at, created_at, completed_at, staff_email, vendors(name), user_profiles!vendor_payments_user_id_fkey(name)')
             .eq('code', code).maybeSingle();
         if (error) throw error;
-        const access = planVoucherAccess(data, req.vendor);
+        if (!data) return null;
+        const { vendors: v, user_profiles: u, ...p } = data;
+        return { ...p, vendor_name: v ? v.name : null, userName: u ? u.name : null };
+    }
+
+    app.get('/api/counter/payment/:code', ...counter, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Enter a code like NP-ABCD-2345.');
+        const payment = await loadPayment(code);
+        const access = planPaymentAccess(payment, req.vendor);
         if (access.reject) return fail(res, access.reject.code, access.reject.template, access.reject.params);
-        const { user_profiles: u, ...voucher } = data;
-        res.json({ status: 'ok', voucher: { ...voucher, userName: u ? u.name : null } });
+        res.json({ status: 'ok', payment: { ...payment, status: effectiveStatus(payment, Date.now()) } });
     });
 
-    app.post('/api/counter/voucher/:code/claim', ...counter, limiters.write, async (req, res) => {
-        if (req.vendor) {
-            const claimedToday = await store.vendorClaimsSince(req.vendor.id, istDayStart(Date.now()), { countOnly: true });
-            const limit = planDailyLimit(req.vendor, claimedToday);
-            if (limit.reject) return fail(res, limit.reject.code, limit.reject.template, limit.reject.params);
-        }
-        return decide(req, res, str(req.params.code).toUpperCase(), 'Claimed', req.vendor ? req.vendor.id : null);
+    app.post('/api/counter/payment/:code/confirm', ...counter, limiters.write, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Enter a code like NP-ABCD-2345.');
+        const { data, error } = await supabase.rpc('naav_confirm_payment', {
+            p_code: code, p_vendor: req.vendor ? req.vendor.id : null, p_staff: req.user.id, p_staff_email: req.user.email,
+        });
+        if (error) throw error;
+        const err = confirmError(data);
+        if (err) return fail(res, err.code, err.template);
+        caches.stats = null;
+        res.json({ status: 'ok', payment: await loadPayment(code) });
     });
 
     // ---------------- vendors (campus counters) ----------------
     app.get('/api/admin/vendors', ...admin, async (req, res) => {
         const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 7));
         const since = new Date(Date.now() - days * DAY_MS).toISOString();
-        const [vendors, staff, claims, open] = await Promise.all([
+        const [vendors, staff, pays] = await Promise.all([
             supabase.from('vendors').select('*').order('sort').order('name'),
             supabase.from('user_profiles').select('id, name, email, vendor_id').eq('role', 'vendor'),
-            supabase.from('redemptions').select('vendor_id, cost').eq('type', 'points').eq('status', 'Claimed').gte('processed_at', since).limit(100000),
-            supabase.from('redemptions').select('vendor_id').eq('type', 'points').eq('status', 'Issued').limit(100000),
+            supabase.from('vendor_payments').select('vendor_id, amount_inr').eq('status', 'Completed').gte('completed_at', since).limit(100000),
         ]);
-        for (const r of [vendors, staff, claims, open]) if (r.error) throw r.error;
-        const settlement = new Map(summarizeSettlement(vendors.data, claims.data, config.POINTS_PER_RUPEE).map(s => [s.vendorId, s]));
+        for (const r of [vendors, staff, pays]) if (r.error) throw r.error;
+        const settlement = new Map(summarizeSettlement(vendors.data, pays.data).map(s => [s.vendorId, s]));
         res.json({
             status: 'ok',
             days,
-            pointsPerRupee: config.POINTS_PER_RUPEE,
             vendors: vendors.data.map(v => ({
                 ...v,
                 staff: staff.data.filter(s => s.vendor_id === v.id).map(s => ({ id: s.id, name: s.name, email: s.email })),
-                openVouchers: open.data.filter(o => o.vendor_id === v.id).length,
                 settlement: settlement.get(v.id),
             })),
         });
@@ -249,12 +240,6 @@ module.exports = function adminRoutes(ctx) {
             .update({ ...parsed.values, updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle();
         if (error) throw error;
         if (!data) return fail(res, 404, 'Vendor not found');
-        if (parsed.values.name) {
-            // Keep the "claim at" name on catalogue items in step (translations are edited in the database).
-            const { error: e2 } = await supabase.from('reward_catalog').update({ vendor: data.name }).eq('vendor_id', id);
-            if (e2) throw e2;
-            store.invalidateRewardTables();
-        }
         res.json({ status: 'ok', vendor: data });
     });
 
@@ -438,15 +423,75 @@ module.exports = function adminRoutes(ctx) {
         res.json({ status: 'ok' });
     });
 
+    // ---------------- campus-wallet payments (admin) ----------------
+    app.get('/api/admin/payments', ...admin, async (req, res) => {
+        let q = supabase.from('vendor_payments')
+            .select('code, vendor_id, amount_inr, status, expires_at, created_at, completed_at, staff_email, refunded_at, refunded_by, refund_reason, vendors(name), user_profiles!vendor_payments_user_id_fkey(name, email)')
+            .order('created_at', { ascending: false }).limit(500);
+        if (req.query.scope !== 'all') q = q.eq('status', 'Completed');
+        const vendorId = str(req.query.vendor);
+        if (vendorId) {
+            if (!VENDOR_ID_RE.test(vendorId)) return fail(res, 400, 'Invalid request');
+            q = q.eq('vendor_id', vendorId);
+        }
+        const [{ data, error }, vendors] = await Promise.all([q, supabase.from('vendors').select('id, name').order('sort').order('name')]);
+        if (error) throw error;
+        if (vendors.error) throw vendors.error;
+        const now = Date.now();
+        res.json({
+            status: 'ok',
+            refundWindowDays: REFUND_WINDOW_DAYS,
+            vendors: vendors.data || [],
+            payments: (data || []).map(({ vendors: v, user_profiles: u, ...p }) => ({
+                ...p, status: effectiveStatus(p, now), vendorName: v ? v.name : null, userName: u ? u.name : null, userEmail: u ? u.email : null,
+            })),
+        });
+    });
+
+    app.post('/api/admin/payments/:code/refund', ...adminWrite, async (req, res) => {
+        const code = parsePaymentCode(req.params.code);
+        if (!code) return fail(res, 400, 'Invalid request');
+        const parsed = parseRefundReason(req.body && req.body.reason);
+        if (parsed.reject) return fail(res, parsed.reject.code, parsed.reject.template, parsed.reject.params);
+        const { data, error } = await supabase.rpc('naav_refund_payment', {
+            p_code: code, p_actor: req.user.email, p_reason: parsed.reason, p_window_days: REFUND_WINDOW_DAYS,
+        });
+        if (error) throw error;
+        const bad = refundError(data);
+        if (bad) return fail(res, bad.code, bad.template, bad.params);
+        caches.stats = null;
+        res.json({ status: 'ok' });
+    });
+
+    // ---------------- reward programme (campus wallet + cashback) ----------------
+    app.get('/api/admin/program', ...admin, async (req, res) => {
+        const program = await store.loadProgram();
+        const since = istDayStart(Date.now());
+        const bonusToday = await store.bonusSpentSince(since);
+        const { data: history, error } = await supabase.from('reward_program_history')
+            .select('changed_at, changed_by, rate_before, rate_after').order('changed_at', { ascending: false }).limit(20);
+        if (error) throw error;
+        res.json({ status: 'ok', program: programView(program), bonusToday, history: history || [], refundWindowDays: REFUND_WINDOW_DAYS });
+    });
+
+    app.post('/api/admin/program', ...adminWrite, async (req, res) => {
+        const parsed = parseProgramInput(req.body);
+        if (parsed.reject) return fail(res, parsed.reject.code, parsed.reject.template, parsed.reject.params);
+        const guard = rateChangeCheck(await store.loadProgram(), parsed.values, req.body);
+        if (guard) return fail(res, guard.reject.code, guard.reject.template, guard.reject.params);
+        const { data, error } = await supabase.from('reward_program')
+            .update({ ...parsed.values, updated_by: req.user.email, updated_at: new Date().toISOString() }).eq('id', 1).select('*').maybeSingle();
+        if (error) throw error;
+        if (!data) return fail(res, 503, 'Run server/supabase/004_wallet_cashback.sql first.');
+        store.invalidateRewardTables();
+        res.json({ status: 'ok', program: programView(normalizeProgram(data)) });
+    });
+
     // ---------------- reward table (database) ----------------
     app.get('/api/admin/rewards', ...admin, async (req, res) => {
-        const [rules, catalog] = await Promise.all([
-            supabase.from('reward_rules').select('*').order('sort'),
-            supabase.from('reward_catalog').select('*').order('sort'),
-        ]);
+        const rules = await supabase.from('reward_rules').select('*').order('sort');
         if (rules.error) throw rules.error;
-        if (catalog.error) throw catalog.error;
-        res.json({ status: 'ok', rules: rules.data, catalog: catalog.data });
+        res.json({ status: 'ok', rules: rules.data });
     });
 
     app.post('/api/admin/rewards/rule', ...adminWrite, async (req, res) => {
@@ -464,17 +509,4 @@ module.exports = function adminRoutes(ctx) {
         res.json({ status: 'ok', rule: data });
     });
 
-    app.post('/api/admin/rewards/item', ...adminWrite, async (req, res) => {
-        const b = req.body || {};
-        const item = str(b.item);
-        const cost = num(b.cost, { min: 1, max: 1000000 });
-        if (!item || !Number.isInteger(cost) || typeof b.active !== 'boolean') return fail(res, 400, 'Invalid request');
-        const { data, error } = await supabase.from('reward_catalog')
-            .update({ cost, active: b.active, updated_at: new Date().toISOString() })
-            .eq('item', item).select('*').maybeSingle();
-        if (error) throw error;
-        if (!data) return fail(res, 404, 'Unknown reward item');
-        store.invalidateRewardTables();
-        res.json({ status: 'ok', item: data });
-    });
 };
